@@ -91,6 +91,18 @@ class Hex3TabooGameTests(unittest.TestCase):
         game.take_turn("place 0 1")  # player 1
         self.assertFalse(game.can_remove())  # player 2 already used the removal
 
+    def test_removed_cell_cannot_be_reclaimed_immediately(self):
+        game = Hex3TabooGame(radius=2)
+        game.take_turn("place 0 0")  # player 1
+        game.take_turn("remove")      # player 2 removes the stone at (0, 0)
+        with self.assertRaises(ValueError):
+            game.take_turn("place 0 0")  # player 1 cannot reuse the same cell immediately
+        # Player 1 may place elsewhere, which clears the restriction.
+        game.take_turn("place 1 0")
+        self.assertEqual(game.board.get((1, 0)), 1)
+        # Now it's player 2's turn, and the previously removed cell remains empty.
+        self.assertIsNone(game.board.get((0, 0)))
+
 
 if __name__ == "__main__":
     unittest.main()

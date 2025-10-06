@@ -112,6 +112,10 @@ class Hex3TabooGame:
         self.removal_used = {1: False, 2: False}
         self.history: List[Move] = []
         self.last_placed: Dict[int, Optional[AxialCoord]] = {1: None, 2: None}
+        # Tracks coordinates that a player is temporarily forbidden to occupy.
+        # This is used to prevent player 1 from immediately reclaiming a stone
+        # that player 2 just removed.
+        self.forbidden_placements: Dict[int, Optional[AxialCoord]] = {1: None, 2: None}
 
     def switch_player(self) -> None:
         self.current_player = 1 if self.current_player == 2 else 2
@@ -119,11 +123,15 @@ class Hex3TabooGame:
     def place_stone(self, coord: AxialCoord) -> None:
         if not self.board.is_valid(coord):
             raise ValueError("盤外には石を置けません。")
+        forbidden = self.forbidden_placements.get(self.current_player)
+        if forbidden is not None and coord == forbidden:
+            raise ValueError("そのマスは直前に取り除かれたため、このターンには置けません。")
         if self.board.get(coord) is not None:
             raise ValueError("そのマスには既に石があります。")
         self.board.set(coord, self.current_player)
         self.history.append(Move(self.current_player, "place", coord))
         self.last_placed[self.current_player] = coord
+        self.forbidden_placements[self.current_player] = None
 
     def can_remove(self) -> bool:
         """Return True if the current player can perform a removal action."""
@@ -148,6 +156,8 @@ class Hex3TabooGame:
         self.removal_used[self.current_player] = True
         # After removal, the opponent no longer has this stone as their last placement.
         self.last_placed[last_move.player] = None
+        # Prevent the opponent from immediately replacing the removed stone.
+        self.forbidden_placements[last_move.player] = last_move.coordinate
         return last_move.coordinate
 
     def evaluate_player_state(self, player: int) -> Tuple[bool, bool]:
