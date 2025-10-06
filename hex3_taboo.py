@@ -17,7 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import sys
-from typing import Dict, Iterable, List, Optional, Tuple
+import time
+from typing import Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 try:
     import tkinter as tk
@@ -120,6 +121,7 @@ class Hex3TabooGame:
         # This is used to prevent player 1 from immediately reclaiming a stone
         # that player 2 just neutralized.
         self.forbidden_placements: Dict[int, Optional[AxialCoord]] = {1: None, 2: None}
+        self.last_detected_line: List[AxialCoord] = []
 
     def switch_player(self) -> None:
         self.current_player = 1 if self.current_player == 2 else 2
@@ -165,10 +167,14 @@ class Hex3TabooGame:
         self.forbidden_placements[last_move.player] = last_move.coordinate
         return last_move.coordinate
 
-    def evaluate_player_state(self, player: int) -> Tuple[bool, bool]:
-        """Return (has_winning_line, has_exact_three_line) for a player."""
+    def evaluate_player_state(
+        self, player: int
+    ) -> Tuple[bool, bool, Optional[List[AxialCoord]], Optional[List[AxialCoord]]]:
+        """Return flags and coordinates for potential winning/losing lines."""
         has_win = False
         has_loss = False
+        winning_line: Optional[List[AxialCoord]] = None
+        losing_line: Optional[List[AxialCoord]] = None
         for coord, occupant in self.board.cells.items():
             if occupant != player:
                 continue
@@ -179,9 +185,11 @@ class Hex3TabooGame:
                     # This line will be considered when iterating its starting cell.
                     continue
                 length = 0
+                coords: List[AxialCoord] = []
                 cursor = coord
                 while self.board.cells.get(cursor) == player:
                     length += 1
+                    coords.append(cursor)
                     cursor = (cursor[0] + direction[0], cursor[1] + direction[1])
                 end_coord = cursor
                 # Determine whether the line is bounded by non-player stones/off-board.
@@ -189,19 +197,38 @@ class Hex3TabooGame:
                 start_occupant = self.board.cells.get(prev_coord)
                 if length >= 4:
                     has_win = True
-                elif length == 3 and start_occupant != player and next_occupant != player:
+                    if winning_line is None:
+                        winning_line = coords.copy()
+                elif (
+                    length == 3
+                    and start_occupant != player
+                    and next_occupant != player
+                ):
                     has_loss = True
-            if has_win:
+                    if losing_line is None:
+                        losing_line = coords.copy()
+            if has_win and has_loss:
                 break
-        return has_win, has_loss
+        return has_win, has_loss, winning_line, losing_line
 
     def check_game_end(self) -> Optional[GameOutcome]:
         """Evaluate the board and return (outcome, message) if the game is over."""
-        has_win, has_loss = self.evaluate_player_state(self.current_player)
-        if has_win:
-            return "win", f"プレイヤー{self.current_player}が4つ以上の連結で勝利しました。"
-        if has_loss:
-            return "loss", f"プレイヤー{self.current_player}は孤立した3連で敗北しました。"
+        has_win, has_loss, winning_line, losing_line = self.evaluate_player_state(
+            self.current_player
+        )
+        self.last_detected_line = []
+        if has_win and winning_line:
+            self.last_detected_line = winning_line.copy()
+            return (
+                "win",
+                f"プレイヤー{self.current_player}が4つ以上の連結で勝利しました。",
+            )
+        if has_loss and losing_line:
+            self.last_detected_line = losing_line.copy()
+            return (
+                "loss",
+                f"プレイヤー{self.current_player}は孤立した3連で敗北しました。",
+            )
         if self.board.is_full():
             return "draw", "ボードが埋まりました。引き分けです。"
         return None
@@ -235,6 +262,50 @@ class Hex3TabooGame:
             return "プレイヤー2（O） - 'place q r' または 'remove'（無効化）を入力してください: "
         token = "X" if self.current_player == 1 else "O"
         return f"プレイヤー{self.current_player}（{token}） - 'place q r' を入力してください: "
+
+
+class Tween:
+    """Simple tween helper class for Tkinter animations."""
+
+    def __init__(
+        self,
+        widget: "tk.Misc",
+        duration_ms: int,
+        update: Callable[[float], None],
+        easing: Optional[Callable[[float], float]] = None,
+        on_complete: Optional[Callable[[], None]] = None,
+    ) -> None:
+        self.widget = widget
+        self.duration_ms = max(1, duration_ms)
+        self.update = update
+        self.easing = easing
+        self.on_complete = on_complete
+        self._start_time = 0.0
+        self._cancelled = False
+
+    def start(self) -> None:
+        self._start_time = time.perf_counter()
+        self._step()
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def _step(self) -> None:
+        if self._cancelled:
+            return
+        elapsed_ms = (time.perf_counter() - self._start_time) * 1000.0
+        progress = min(1.0, elapsed_ms / self.duration_ms)
+        eased = self.easing(progress) if self.easing else progress
+        self.update(eased)
+        if progress >= 1.0:
+            if self.on_complete:
+                self.on_complete()
+            return
+        self.widget.after(16, self._step)
+
+
+def ease_out_quad(t: float) -> float:
+    return 1 - (1 - t) * (1 - t)
 
 
 class Hex3TabooGUI:
@@ -275,6 +346,16 @@ class Hex3TabooGUI:
 
         self.hex_size: float = self.DEFAULT_HEX_SIZE
         self.cell_items: Dict[int, AxialCoord] = {}
+        self.coord_to_item: Dict[AxialCoord, int] = {}
+        self._cell_states: Dict[AxialCoord, Optional[int]] = {
+            coord: None for coord in self.game.board.cells
+        }
+        self._target_fill_colors: Dict[int, str] = {}
+        self._active_tweens: Dict[int, Tween] = {}
+        self._line_animation_items: List[int] = []
+        self._line_animation_cycle = 0
+        self._base_line_colors: Dict[int, str] = {}
+        self._line_highlight_tween: Optional[Tween] = None
         self._draw_board()
         self.update_board()
         self.update_status()
@@ -298,8 +379,13 @@ class Hex3TabooGUI:
         offset_x = (canvas_width - board_width) / 2 - min_x
         offset_y = (canvas_height - board_height) / 2 - min_y
 
+        self._stop_line_highlight()
         self.canvas.delete("all")
+        for tween in self._active_tweens.values():
+            tween.cancel()
+        self._active_tweens.clear()
         self.cell_items.clear()
+        self.coord_to_item.clear()
 
         for coord in coordinates:
             x, y = self._axial_to_pixel(coord)
@@ -319,6 +405,8 @@ class Hex3TabooGUI:
             )
             self.canvas.tag_bind(item, "<Button-1>", lambda _event, c=coord: self.on_cell_clicked(c))
             self.cell_items[item] = coord
+            self.coord_to_item[coord] = item
+            self._target_fill_colors[item] = self.EMPTY_COLOR
 
     def _axial_to_pixel(self, coord: AxialCoord, hex_size: Optional[float] = None) -> Tuple[float, float]:
         size = hex_size if hex_size is not None else self.hex_size
@@ -397,11 +485,14 @@ class Hex3TabooGUI:
         self.update_board()
         if result:
             outcome, message = result
+            line_coords = self.game.last_detected_line
             self.status_var.set(message)
             self.remove_button.config(state=tk.DISABLED)
             if messagebox is not None:
                 messagebox.showinfo("ゲーム終了", message)
             self.canvas.tag_unbind("cell", "<Button-1>")
+            if line_coords:
+                self._animate_line_highlight(line_coords)
             if outcome == "win":
                 self.root.after(200, self.reset_game)
             return
@@ -412,6 +503,10 @@ class Hex3TabooGUI:
     def reset_game(self) -> None:
         """Reset the board for a new game."""
         self.game = Hex3TabooGame(radius=self.board_radius)
+        self._cell_states = {coord: None for coord in self.game.board.cells}
+        self._target_fill_colors.clear()
+        self._active_tweens.clear()
+        self._stop_line_highlight()
         self._draw_board()
         self.update_board()
         self.update_status()
@@ -425,7 +520,19 @@ class Hex3TabooGUI:
         }
         for item_id, coord in self.cell_items.items():
             occupant = self.game.board.cells[coord]
-            self.canvas.itemconfig(item_id, fill=occupant_to_color[occupant])
+            target_color = occupant_to_color[occupant]
+            previous = self._cell_states.get(coord)
+            previous_color = occupant_to_color.get(previous, self.EMPTY_COLOR)
+            if previous is None and occupant is not None:
+                self._start_fill_animation(item_id, self.EMPTY_COLOR, target_color)
+            elif previous is not None and occupant is None:
+                self._start_fill_animation(item_id, previous_color, self.EMPTY_COLOR)
+            elif previous != occupant:
+                self._start_fill_animation(item_id, previous_color, target_color)
+            else:
+                self.canvas.itemconfig(item_id, fill=target_color)
+                self._target_fill_colors[item_id] = target_color
+            self._cell_states[coord] = occupant
         self.update_remove_button()
 
     def update_status(self) -> None:
@@ -448,6 +555,142 @@ class Hex3TabooGUI:
         self._update_hex_size(event.width, event.height)
         self._draw_board()
         self.update_board()
+
+    def _hex_to_rgb(self, hex_color: str) -> Tuple[int, int, int]:
+        hex_color = hex_color.lstrip("#")
+        return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
+
+    def _rgb_to_hex(self, rgb: Tuple[float, float, float]) -> str:
+        return "#" + "".join(
+            f"{int(max(0, min(255, round(component)))):02x}" for component in rgb
+        )
+
+    def _interpolate_color(
+        self, start_color: str, end_color: str, factor: float
+    ) -> str:
+        start_r, start_g, start_b = self._hex_to_rgb(start_color)
+        end_r, end_g, end_b = self._hex_to_rgb(end_color)
+        rgb = (
+            start_r + (end_r - start_r) * factor,
+            start_g + (end_g - start_g) * factor,
+            start_b + (end_b - start_b) * factor,
+        )
+        return self._rgb_to_hex(rgb)
+
+    def _start_fill_animation(
+        self, item_id: int, start_color: str, end_color: str, duration_ms: int = 250
+    ) -> None:
+        if item_id in self._active_tweens:
+            self._active_tweens[item_id].cancel()
+        self.canvas.itemconfig(item_id, fill=start_color)
+        self._target_fill_colors[item_id] = end_color
+
+        def update(progress: float) -> None:
+            eased = ease_out_quad(progress)
+            color = self._interpolate_color(start_color, end_color, eased)
+            self.canvas.itemconfig(item_id, fill=color)
+
+        def finish() -> None:
+            self.canvas.itemconfig(item_id, fill=end_color)
+            self._active_tweens.pop(item_id, None)
+
+        tween = Tween(self.canvas, duration_ms, update, on_complete=finish)
+        self._active_tweens[item_id] = tween
+        tween.start()
+
+    def _stop_line_highlight(self) -> None:
+        if self._line_highlight_tween is not None:
+            self._line_highlight_tween.cancel()
+        for item in self._line_animation_items:
+            base_color = self._base_line_colors.get(item)
+            if base_color:
+                self.canvas.itemconfig(item, fill=base_color)
+        self._line_animation_items.clear()
+        self._base_line_colors.clear()
+        self._line_animation_cycle = 0
+        self._line_highlight_tween = None
+
+    def _animate_line_highlight(
+        self, coords: List[AxialCoord], highlight_color: str = "#ffd166"
+    ) -> None:
+        self._stop_line_highlight()
+        items = [self.coord_to_item[c] for c in coords if c in self.coord_to_item]
+        if not items:
+            return
+        self._line_animation_items = items
+        self._base_line_colors = {
+            item: self._target_fill_colors.get(item, self.canvas.itemcget(item, "fill"))
+            for item in items
+        }
+        self._line_animation_cycle = 0
+        self._run_line_highlight_cycle(highlight_color)
+
+    def _run_line_highlight_cycle(self, highlight_color: str) -> None:
+        if not self._line_animation_items:
+            return
+        base_colors = self._base_line_colors
+        items = list(self._line_animation_items)
+
+        def forward_complete() -> None:
+            self._line_highlight_tween = Tween(
+                self.canvas,
+                260,
+                lambda progress: self._update_line_colors(
+                    items,
+                    highlight_color,
+                    base_colors,
+                    progress,
+                ),
+                on_complete=backward_complete,
+            )
+            self._line_highlight_tween.start()
+
+        def backward_complete() -> None:
+            self._line_animation_cycle += 1
+            if self._line_animation_cycle < 3:
+                self.root.after(140, lambda: self._run_line_highlight_cycle(highlight_color))
+            else:
+                for item in items:
+                    base = base_colors.get(item)
+                    if base:
+                        self.canvas.itemconfig(item, fill=base)
+                self._line_animation_items.clear()
+                self._line_highlight_tween = None
+
+        self._line_highlight_tween = Tween(
+            self.canvas,
+            260,
+            lambda progress: self._update_line_colors(
+                items,
+                base_colors,
+                highlight_color,
+                progress,
+            ),
+            on_complete=forward_complete,
+        )
+        self._line_highlight_tween.start()
+
+    def _update_line_colors(
+        self,
+        items: List[int],
+        start_colors: Union[Dict[int, str], str],
+        end_colors: Union[Dict[int, str], str],
+        progress: float,
+    ) -> None:
+        eased = ease_out_quad(progress)
+        for item in items:
+            start_color = (
+                start_colors[item]
+                if isinstance(start_colors, dict)
+                else start_colors
+            )
+            end_color = (
+                end_colors[item]
+                if isinstance(end_colors, dict)
+                else end_colors
+            )
+            color = self._interpolate_color(start_color, end_color, eased)
+            self.canvas.itemconfig(item, fill=color)
 
 
 def _print_instructions(game: Hex3TabooGame) -> None:
@@ -486,6 +729,8 @@ def run_cli(radius: int = 4) -> None:
             outcome, message = result
             print(game.board.render())
             print(message)
+            if game.last_detected_line:
+                print("ライン座標:", game.last_detected_line)
             break
 
 
