@@ -1,4 +1,4 @@
-"""Command-line prototype for the Hex 3-Taboo board game.
+"""Hex 3-Taboo board game prototype.
 
 This module implements the core rules described in the README:
 - A hexagonal board with a configurable radius (default 4).
@@ -8,13 +8,22 @@ This module implements the core rules described in the README:
 - After each turn we evaluate for a winning line (length >= 4) or a losing
   line (exactly length 3). Wins take precedence over losses.
 
-The module exposes a ``Hex3TabooGame`` class for programmatic use and provides
-an interactive command-line loop when executed as a script.
+The module exposes a ``Hex3TabooGame`` class for programmatic use and offers
+both a command-line and a lightweight Tkinter GUI front end.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
+import sys
 from typing import Dict, Iterable, List, Optional, Tuple
+
+try:
+    import tkinter as tk
+    from tkinter import messagebox
+except Exception:  # pragma: no cover - Tk may be unavailable on some systems
+    tk = None
+    messagebox = None
 
 
 AxialCoord = Tuple[int, int]
@@ -212,6 +221,153 @@ class Hex3TabooGame:
         return f"Player {self.current_player} ({token}) - enter 'place q r': "
 
 
+class Hex3TabooGUI:
+    """Simple Tkinter-based interface for playing Hex 3-Taboo."""
+
+    HEX_SIZE = 30
+    EMPTY_COLOR = "#f5f5f5"
+    PLAYER_COLORS = {1: "#d64550", 2: "#4072b0"}
+    OUTLINE_COLOR = "#4a4a4a"
+
+    def __init__(self, game: Hex3TabooGame) -> None:
+        if tk is None:
+            raise RuntimeError("Tkinter is not available in this environment.")
+
+        self.game = game
+        self.root = tk.Tk()
+        self.root.title("Hex 3-Taboo")
+
+        self.status_var = tk.StringVar()
+        status_label = tk.Label(self.root, textvariable=self.status_var, font=("Helvetica", 12))
+        status_label.pack(pady=6)
+
+        self.canvas = tk.Canvas(self.root, background="white", highlightthickness=0)
+        self.canvas.pack(padx=10, pady=10)
+
+        controls = tk.Frame(self.root)
+        controls.pack(pady=4)
+
+        self.remove_button = tk.Button(
+            controls,
+            text="Remove opponent's last stone",
+            command=self.on_remove,
+            state=tk.DISABLED,
+        )
+        self.remove_button.pack()
+
+        self.cell_items: Dict[int, AxialCoord] = {}
+        self._draw_board()
+        self.update_board()
+        self.update_status()
+
+    def run(self) -> None:
+        self.root.mainloop()
+
+    def _draw_board(self) -> None:
+        coordinates = list(self.game.board.cells.keys())
+        positions = {coord: self._axial_to_pixel(coord) for coord in coordinates}
+
+        min_x = min(x for x, _ in positions.values()) - self.HEX_SIZE
+        max_x = max(x for x, _ in positions.values()) + self.HEX_SIZE
+        min_y = min(y for _, y in positions.values()) - self.HEX_SIZE
+        max_y = max(y for _, y in positions.values()) + self.HEX_SIZE
+
+        width = int(math.ceil(max_x - min_x))
+        height = int(math.ceil(max_y - min_y))
+        self.canvas.config(width=width, height=height)
+
+        self.canvas.delete("all")
+        self.cell_items.clear()
+
+        for coord, (x, y) in positions.items():
+            polygon_points = self._hexagon_points(x - min_x, y - min_y)
+            item = self.canvas.create_polygon(
+                polygon_points,
+                outline=self.OUTLINE_COLOR,
+                fill=self.EMPTY_COLOR,
+                width=2,
+                tags=("cell",),
+            )
+            self.canvas.tag_bind(item, "<Button-1>", lambda _event, c=coord: self.on_cell_clicked(c))
+            self.cell_items[item] = coord
+
+    def _axial_to_pixel(self, coord: AxialCoord) -> Tuple[float, float]:
+        q, r = coord
+        x = self.HEX_SIZE * math.sqrt(3) * (q + r / 2)
+        y = self.HEX_SIZE * 1.5 * r
+        return x, y
+
+    def _hexagon_points(self, center_x: float, center_y: float) -> List[float]:
+        points: List[float] = []
+        for i in range(6):
+            angle = math.radians(60 * i - 30)
+            x = center_x + self.HEX_SIZE * math.cos(angle)
+            y = center_y + self.HEX_SIZE * math.sin(angle)
+            points.extend((x, y))
+        return points
+
+    def on_cell_clicked(self, coord: AxialCoord) -> None:
+        try:
+            acting_player = self.game.current_player
+            self.game.place_stone(coord)
+        except Exception as exc:
+            if messagebox is not None:
+                messagebox.showinfo("Invalid move", str(exc))
+            return
+        self._finalize_turn(acting_player)
+
+    def on_remove(self) -> None:
+        try:
+            acting_player = self.game.current_player
+            removed = self.game.remove_last_opponent_stone()
+        except Exception as exc:
+            if messagebox is not None:
+                messagebox.showinfo("Cannot remove", str(exc))
+            return
+        if removed is not None and messagebox is not None:
+            messagebox.showinfo("Removal", f"Removed stone at {removed}")
+        self._finalize_turn(acting_player)
+
+    def _finalize_turn(self, acting_player: int) -> None:
+        result = self.game.check_game_end()
+        self.update_board()
+        if result:
+            self.status_var.set(result)
+            self.remove_button.config(state=tk.DISABLED)
+            if messagebox is not None:
+                messagebox.showinfo("Game Over", result)
+            self.canvas.tag_unbind("cell", "<Button-1>")
+            return
+        self.game.switch_player()
+        self.update_status()
+        self.update_remove_button()
+
+    def update_board(self) -> None:
+        occupant_to_color = {
+            None: self.EMPTY_COLOR,
+            1: self.PLAYER_COLORS[1],
+            2: self.PLAYER_COLORS[2],
+        }
+        for item_id, coord in self.cell_items.items():
+            occupant = self.game.board.cells[coord]
+            self.canvas.itemconfig(item_id, fill=occupant_to_color[occupant])
+        self.update_remove_button()
+
+    def update_status(self) -> None:
+        token = "X" if self.game.current_player == 1 else "O"
+        if self.game.current_player == 2 and self.game.can_remove():
+            action_hint = " - place or remove"
+        else:
+            action_hint = " - place a stone"
+        self.status_var.set(f"Player {self.game.current_player} ({token}){action_hint}")
+
+    def update_remove_button(self) -> None:
+        if self.game.current_player == 2 and self.game.can_remove():
+            self.remove_button.config(state=tk.NORMAL)
+        else:
+            self.remove_button.config(state=tk.DISABLED)
+
+
 def _print_instructions(game: Hex3TabooGame) -> None:
     print("Hex 3-Taboo CLI Prototype")
     print("Board radius:", game.board.radius)
@@ -219,8 +375,8 @@ def _print_instructions(game: Hex3TabooGame) -> None:
     print("Player 1 uses X, Player 2 uses O. Player 2 may remove once per game.")
 
 
-def main() -> None:
-    game = Hex3TabooGame()
+def run_cli(radius: int = 4) -> None:
+    game = Hex3TabooGame(radius=radius)
     _print_instructions(game)
     while True:
         print(game.board.render())
@@ -236,7 +392,11 @@ def main() -> None:
             print(f"Error: {exc}")
             continue
         else:
-            if game.history and game.history[-1].action == "remove" and game.history[-1].player == acting_player:
+            if (
+                game.history
+                and game.history[-1].action == "remove"
+                and game.history[-1].player == acting_player
+            ):
                 coord = game.history[-1].coordinate
                 if coord is not None:
                     print(f"Removed opponent stone at {coord}.")
@@ -246,5 +406,32 @@ def main() -> None:
             break
 
 
+def run_gui(radius: int = 4) -> None:
+    game = Hex3TabooGame(radius=radius)
+    gui = Hex3TabooGUI(game)
+    gui.run()
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Hex 3-Taboo prototype")
+    parser.add_argument("--radius", type=int, default=4, help="Board radius (default: 4)")
+    parser.add_argument(
+        "--mode",
+        choices=("cli", "gui"),
+        default="cli",
+        help="Run in command-line or GUI mode.",
+    )
+    args = parser.parse_args(argv)
+
+    if args.mode == "gui":
+        if tk is None:
+            raise RuntimeError("Tkinter is not available; GUI mode cannot be used.")
+        run_gui(radius=args.radius)
+    else:
+        run_cli(radius=args.radius)
+
+
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

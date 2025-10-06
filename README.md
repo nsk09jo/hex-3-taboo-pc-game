@@ -129,3 +129,19 @@ Designing a PC version requires translating the tactile board into an intuitive,
 - **Cross‑platform support**: Extend to mobile (iOS/Android) and browser with shared codebase.
 - **Spectator mode and replay system**: Allow others to watch games live or review completed games with move-by-move playback.
 - **Community content**: Enable users to create custom boards, themes, and rule sets.
+
+## Running the prototype
+
+Install Python 3.8+ with Tkinter. To play from the command line:
+
+```bash
+python hex3_taboo.py --mode cli
+```
+
+To launch the GUI version instead (requires Tkinter):
+
+```bash
+python hex3_taboo.py --mode gui
+```
+
+You can adjust the board radius in either mode with `--radius` (default 4).
