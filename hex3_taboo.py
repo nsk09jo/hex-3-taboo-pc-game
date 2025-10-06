@@ -3,8 +3,9 @@
 This module implements the core rules described in the README:
 - A hexagonal board with a configurable radius (default 4).
 - Two players alternately place stones on empty cells.
-- The second player may use a single removal action per game to remove the
-  opponent's last placed stone instead of placing.
+- The second player may, once per game, neutralize the opponent's last
+  placement instead of placing their own stone. Neutralized stones belong to
+  neither player.
 - After each turn we evaluate for a winning line (length >= 4) or a losing
   line (exactly length 3). Wins take precedence over losses.
 
@@ -35,7 +36,7 @@ class Move:
     """Record of a single action in the game history."""
 
     player: int
-    action: str  # "place" or "remove"
+    action: str  # "place" or "disable"
     coordinate: Optional[AxialCoord]
 
 
@@ -43,6 +44,7 @@ class HexBoard:
     """Hexagonal board represented using axial coordinates."""
 
     AXIAL_DIRECTIONS: Tuple[AxialCoord, ...] = ((1, 0), (0, 1), (-1, 1))
+    DISABLED_STONE: int = 0
 
     def __init__(self, radius: int = 4) -> None:
         if radius < 1:
@@ -93,6 +95,8 @@ class HexBoard:
                 occupant = self.cells[coord]
                 if occupant is None:
                     token = "."
+                elif occupant == HexBoard.DISABLED_STONE:
+                    token = "#"
                 elif occupant == 1:
                     token = "X"
                 else:
@@ -114,7 +118,7 @@ class Hex3TabooGame:
         self.last_placed: Dict[int, Optional[AxialCoord]] = {1: None, 2: None}
         # Tracks coordinates that a player is temporarily forbidden to occupy.
         # This is used to prevent player 1 from immediately reclaiming a stone
-        # that player 2 just removed.
+        # that player 2 just neutralized.
         self.forbidden_placements: Dict[int, Optional[AxialCoord]] = {1: None, 2: None}
 
     def switch_player(self) -> None:
@@ -125,7 +129,7 @@ class Hex3TabooGame:
             raise ValueError("盤外には石を置けません。")
         forbidden = self.forbidden_placements.get(self.current_player)
         if forbidden is not None and coord == forbidden:
-            raise ValueError("そのマスは直前に取り除かれたため、このターンには置けません。")
+            raise ValueError("そのマスは直前に無効化されたため、このターンには置けません。")
         if self.board.get(coord) is not None:
             raise ValueError("そのマスには既に石があります。")
         self.board.set(coord, self.current_player)
@@ -134,7 +138,7 @@ class Hex3TabooGame:
         self.forbidden_placements[self.current_player] = None
 
     def can_remove(self) -> bool:
-        """Return True if the current player can perform a removal action."""
+        """Return True if the current player can perform a neutralization action."""
         if self.current_player != 2:
             return False
         if self.removal_used[2]:
@@ -147,16 +151,17 @@ class Hex3TabooGame:
         return True
 
     def remove_last_opponent_stone(self) -> AxialCoord:
+        """Neutralize the opponent's last placement and return its coordinate."""
         if not self.can_remove():
-            raise ValueError("取り除きは現在行えません。")
+            raise ValueError("無効化は現在行えません。")
         last_move = self.history[-1]
         assert last_move.coordinate is not None
-        self.board.set(last_move.coordinate, None)
-        self.history.append(Move(self.current_player, "remove", last_move.coordinate))
+        self.board.set(last_move.coordinate, HexBoard.DISABLED_STONE)
+        self.history.append(Move(self.current_player, "disable", last_move.coordinate))
         self.removal_used[self.current_player] = True
-        # After removal, the opponent no longer has this stone as their last placement.
+        # After neutralization, the opponent no longer has this stone as their last placement.
         self.last_placed[last_move.player] = None
-        # Prevent the opponent from immediately replacing the removed stone.
+        # Prevent the opponent from immediately replacing the neutralized stone.
         self.forbidden_placements[last_move.player] = last_move.coordinate
         return last_move.coordinate
 
@@ -217,7 +222,7 @@ class Hex3TabooGame:
                 raise ValueError("使い方: remove")
             self.remove_last_opponent_stone()
         else:
-            raise ValueError("不明なコマンドです。'place q r' または 'remove' を入力してください。")
+            raise ValueError("不明なコマンドです。'place q r' または 'remove'（無効化）を入力してください。")
 
         result = self.check_game_end()
         if result is not None:
@@ -227,7 +232,7 @@ class Hex3TabooGame:
 
     def format_prompt(self) -> str:
         if self.current_player == 2 and self.can_remove():
-            return "プレイヤー2（O） - 'place q r' または 'remove' を入力してください: "
+            return "プレイヤー2（O） - 'place q r' または 'remove'（無効化）を入力してください: "
         token = "X" if self.current_player == 1 else "O"
         return f"プレイヤー{self.current_player}（{token}） - 'place q r' を入力してください: "
 
@@ -262,7 +267,7 @@ class Hex3TabooGUI:
 
         self.remove_button = tk.Button(
             controls,
-            text="相手の最後の石を取り除く",
+            text="相手の最後の石を無効化",
             command=self.on_remove,
             state=tk.DISABLED,
         )
@@ -381,10 +386,10 @@ class Hex3TabooGUI:
             removed = self.game.remove_last_opponent_stone()
         except Exception as exc:
             if messagebox is not None:
-                messagebox.showinfo("取り除けません", str(exc))
+                messagebox.showinfo("無効化できません", str(exc))
             return
         if removed is not None and messagebox is not None:
-            messagebox.showinfo("除去", f"{removed}の石を取り除きました。")
+            messagebox.showinfo("無効化", f"{removed}の石を無効化しました。")
         self._finalize_turn(acting_player)
 
     def _finalize_turn(self, acting_player: int) -> None:
@@ -414,6 +419,7 @@ class Hex3TabooGUI:
     def update_board(self) -> None:
         occupant_to_color = {
             None: self.EMPTY_COLOR,
+            HexBoard.DISABLED_STONE: "#bdbdbd",
             1: self.PLAYER_COLORS[1],
             2: self.PLAYER_COLORS[2],
         }
@@ -425,7 +431,7 @@ class Hex3TabooGUI:
     def update_status(self) -> None:
         token = "X" if self.game.current_player == 1 else "O"
         if self.game.current_player == 2 and self.game.can_remove():
-            action_hint = "：石を置くか取り除くことができます"
+            action_hint = "：石を置くか無効化できます"
         else:
             action_hint = "：石を置いてください"
         self.status_var.set(f"プレイヤー{self.game.current_player}（{token}）{action_hint}")
@@ -448,7 +454,7 @@ def _print_instructions(game: Hex3TabooGame) -> None:
     print("Hex 3-Taboo CLI プロトタイプ")
     print("盤の半径:", game.board.radius)
     print("座標は軸座標 (q, r) で指定します。例: place 0 0")
-    print("プレイヤー1はX、プレイヤー2はOを使用します。プレイヤー2は1回だけ取り除けます。")
+    print("プレイヤー1はX、プレイヤー2はOを使用します。プレイヤー2は1回だけ相手の最後の石を無効化できます。")
 
 
 def run_cli(radius: int = 4) -> None:
@@ -470,12 +476,12 @@ def run_cli(radius: int = 4) -> None:
         else:
             if (
                 game.history
-                and game.history[-1].action == "remove"
+                and game.history[-1].action == "disable"
                 and game.history[-1].player == acting_player
             ):
                 coord = game.history[-1].coordinate
                 if coord is not None:
-                    print(f"相手の石{coord}を取り除きました。")
+                    print(f"相手の石{coord}を無効化しました。")
         if result:
             outcome, message = result
             print(game.board.render())
