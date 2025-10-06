@@ -344,6 +344,13 @@ class Hex3TabooGUI:
         )
         self.remove_button.pack()
 
+        self.reset_button = tk.Button(
+            controls,
+            text="ゲームをリセット",
+            command=self.reset_game,
+        )
+        self._reset_button_visible = False
+
         self.hex_size: float = self.DEFAULT_HEX_SIZE
         self.cell_items: Dict[int, AxialCoord] = {}
         self.coord_to_item: Dict[AxialCoord, int] = {}
@@ -484,7 +491,7 @@ class Hex3TabooGUI:
         result = self.game.check_game_end()
         self.update_board()
         if result:
-            outcome, message = result
+            _outcome, message = result
             line_coords = self.game.last_detected_line
             self.status_var.set(message)
             self.remove_button.config(state=tk.DISABLED)
@@ -493,8 +500,7 @@ class Hex3TabooGUI:
             self.canvas.tag_unbind("cell", "<Button-1>")
             if line_coords:
                 self._animate_line_highlight(line_coords)
-            if outcome == "win":
-                self.root.after(200, self.reset_game)
+            self._show_reset_button()
             return
         self.game.switch_player()
         self.update_status()
@@ -502,6 +508,7 @@ class Hex3TabooGUI:
 
     def reset_game(self) -> None:
         """Reset the board for a new game."""
+        self._hide_reset_button()
         self.game = Hex3TabooGame(radius=self.board_radius)
         self._cell_states = {coord: None for coord in self.game.board.cells}
         self._target_fill_colors.clear()
@@ -691,6 +698,16 @@ class Hex3TabooGUI:
             )
             color = self._interpolate_color(start_color, end_color, eased)
             self.canvas.itemconfig(item, fill=color)
+
+    def _show_reset_button(self) -> None:
+        if not self._reset_button_visible:
+            self.reset_button.pack(pady=(6, 0))
+            self._reset_button_visible = True
+
+    def _hide_reset_button(self) -> None:
+        if self._reset_button_visible:
+            self.reset_button.pack_forget()
+            self._reset_button_visible = False
 
 
 def _print_instructions(game: Hex3TabooGame) -> None:
