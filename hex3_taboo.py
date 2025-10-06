@@ -195,8 +195,7 @@ class Hex3TabooGame:
         elif action == "remove":
             if len(parts) != 1:
                 raise ValueError("Usage: remove")
-            removed = self.remove_last_opponent_stone()
-            print(f"Removed opponent stone at {removed}.")
+            self.remove_last_opponent_stone()
         else:
             raise ValueError("Unknown command. Use 'place q r' or 'remove'.")
 
@@ -231,10 +230,16 @@ def main() -> None:
             print("\nGame aborted.")
             break
         try:
+            acting_player = game.current_player
             result = game.take_turn(command)
         except Exception as exc:  # broad for CLI feedback
             print(f"Error: {exc}")
             continue
+        else:
+            if game.history and game.history[-1].action == "remove" and game.history[-1].player == acting_player:
+                coord = game.history[-1].coordinate
+                if coord is not None:
+                    print(f"Removed opponent stone at {coord}.")
         if result:
             print(game.board.render())
             print(result)
