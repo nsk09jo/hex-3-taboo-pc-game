@@ -27,6 +27,7 @@ except Exception:  # pragma: no cover - Tk may be unavailable on some systems
 
 
 AxialCoord = Tuple[int, int]
+GameOutcome = Tuple[str, str]
 
 
 @dataclass(frozen=True)
@@ -45,7 +46,7 @@ class HexBoard:
 
     def __init__(self, radius: int = 4) -> None:
         if radius < 1:
-            raise ValueError("Radius must be at least 1")
+            raise ValueError("半径は1以上でなければなりません。")
         self.radius = radius
         self.cells: Dict[AxialCoord, Optional[int]] = {
             (q, r): None for q, r in self._generate_coordinates(radius)
@@ -64,12 +65,12 @@ class HexBoard:
 
     def get(self, coord: AxialCoord) -> Optional[int]:
         if not self.is_valid(coord):
-            raise ValueError(f"Coordinate {coord} is outside the board")
+            raise ValueError(f"座標{coord}は盤外です。")
         return self.cells[coord]
 
     def set(self, coord: AxialCoord, value: Optional[int]) -> None:
         if not self.is_valid(coord):
-            raise ValueError(f"Coordinate {coord} is outside the board")
+            raise ValueError(f"座標{coord}は盤外です。")
         self.cells[coord] = value
 
     def empty_cells(self) -> List[AxialCoord]:
@@ -117,9 +118,9 @@ class Hex3TabooGame:
 
     def place_stone(self, coord: AxialCoord) -> None:
         if not self.board.is_valid(coord):
-            raise ValueError("Cannot place outside the board")
+            raise ValueError("盤外には石を置けません。")
         if self.board.get(coord) is not None:
-            raise ValueError("Cell already occupied")
+            raise ValueError("そのマスには既に石があります。")
         self.board.set(coord, self.current_player)
         self.history.append(Move(self.current_player, "place", coord))
         self.last_placed[self.current_player] = coord
@@ -139,7 +140,7 @@ class Hex3TabooGame:
 
     def remove_last_opponent_stone(self) -> AxialCoord:
         if not self.can_remove():
-            raise ValueError("Removal not available")
+            raise ValueError("取り除きは現在行えません。")
         last_move = self.history[-1]
         assert last_move.coordinate is not None
         self.board.set(last_move.coordinate, None)
@@ -179,34 +180,34 @@ class Hex3TabooGame:
                 break
         return has_win, has_loss
 
-    def check_game_end(self) -> Optional[str]:
-        """Evaluate the board and return a message if the game is over."""
+    def check_game_end(self) -> Optional[GameOutcome]:
+        """Evaluate the board and return (outcome, message) if the game is over."""
         has_win, has_loss = self.evaluate_player_state(self.current_player)
         if has_win:
-            return f"Player {self.current_player} wins with a line of four or more!"
+            return "win", f"プレイヤー{self.current_player}が4つ以上の連結で勝利しました。"
         if has_loss:
-            return f"Player {self.current_player} loses with an isolated three-in-a-row."
+            return "loss", f"プレイヤー{self.current_player}は孤立した3連で敗北しました。"
         if self.board.is_full():
-            return "The board is full. The game is a draw."
+            return "draw", "ボードが埋まりました。引き分けです。"
         return None
 
-    def take_turn(self, command: str) -> Optional[str]:
+    def take_turn(self, command: str) -> Optional[GameOutcome]:
         """Process a command for the current player and return an end-state message."""
         parts = command.strip().split()
         if not parts:
-            raise ValueError("Empty command")
+            raise ValueError("コマンドが入力されていません。")
         action = parts[0].lower()
         if action == "place":
             if len(parts) != 3:
-                raise ValueError("Usage: place <q> <r>")
+                raise ValueError("使い方: place <q> <r>")
             q, r = int(parts[1]), int(parts[2])
             self.place_stone((q, r))
         elif action == "remove":
             if len(parts) != 1:
-                raise ValueError("Usage: remove")
+                raise ValueError("使い方: remove")
             self.remove_last_opponent_stone()
         else:
-            raise ValueError("Unknown command. Use 'place q r' or 'remove'.")
+            raise ValueError("不明なコマンドです。'place q r' または 'remove' を入力してください。")
 
         result = self.check_game_end()
         if result is not None:
@@ -216,9 +217,9 @@ class Hex3TabooGame:
 
     def format_prompt(self) -> str:
         if self.current_player == 2 and self.can_remove():
-            return "Player 2 (O) - enter 'place q r' or 'remove': "
+            return "プレイヤー2（O） - 'place q r' または 'remove' を入力してください: "
         token = "X" if self.current_player == 1 else "O"
-        return f"Player {self.current_player} ({token}) - enter 'place q r': "
+        return f"プレイヤー{self.current_player}（{token}） - 'place q r' を入力してください: "
 
 
 class Hex3TabooGUI:
@@ -234,8 +235,9 @@ class Hex3TabooGUI:
             raise RuntimeError("Tkinter is not available in this environment.")
 
         self.game = game
+        self.board_radius = game.board.radius
         self.root = tk.Tk()
-        self.root.title("Hex 3-Taboo")
+        self.root.title("ヘックス3-タブー")
 
         self.status_var = tk.StringVar()
         status_label = tk.Label(self.root, textvariable=self.status_var, font=("Helvetica", 12))
@@ -249,7 +251,7 @@ class Hex3TabooGUI:
 
         self.remove_button = tk.Button(
             controls,
-            text="Remove opponent's last stone",
+            text="相手の最後の石を取り除く",
             command=self.on_remove,
             state=tk.DISABLED,
         )
@@ -312,7 +314,7 @@ class Hex3TabooGUI:
             self.game.place_stone(coord)
         except Exception as exc:
             if messagebox is not None:
-                messagebox.showinfo("Invalid move", str(exc))
+                messagebox.showinfo("無効な手", str(exc))
             return
         self._finalize_turn(acting_player)
 
@@ -322,25 +324,35 @@ class Hex3TabooGUI:
             removed = self.game.remove_last_opponent_stone()
         except Exception as exc:
             if messagebox is not None:
-                messagebox.showinfo("Cannot remove", str(exc))
+                messagebox.showinfo("取り除けません", str(exc))
             return
         if removed is not None and messagebox is not None:
-            messagebox.showinfo("Removal", f"Removed stone at {removed}")
+            messagebox.showinfo("除去", f"{removed}の石を取り除きました。")
         self._finalize_turn(acting_player)
 
     def _finalize_turn(self, acting_player: int) -> None:
         result = self.game.check_game_end()
         self.update_board()
         if result:
-            self.status_var.set(result)
+            outcome, message = result
+            self.status_var.set(message)
             self.remove_button.config(state=tk.DISABLED)
             if messagebox is not None:
-                messagebox.showinfo("Game Over", result)
+                messagebox.showinfo("ゲーム終了", message)
             self.canvas.tag_unbind("cell", "<Button-1>")
+            if outcome == "win":
+                self.root.after(200, self.reset_game)
             return
         self.game.switch_player()
         self.update_status()
         self.update_remove_button()
+
+    def reset_game(self) -> None:
+        """Reset the board for a new game."""
+        self.game = Hex3TabooGame(radius=self.board_radius)
+        self._draw_board()
+        self.update_board()
+        self.update_status()
 
     def update_board(self) -> None:
         occupant_to_color = {
@@ -356,10 +368,10 @@ class Hex3TabooGUI:
     def update_status(self) -> None:
         token = "X" if self.game.current_player == 1 else "O"
         if self.game.current_player == 2 and self.game.can_remove():
-            action_hint = " - place or remove"
+            action_hint = "：石を置くか取り除くことができます"
         else:
-            action_hint = " - place a stone"
-        self.status_var.set(f"Player {self.game.current_player} ({token}){action_hint}")
+            action_hint = "：石を置いてください"
+        self.status_var.set(f"プレイヤー{self.game.current_player}（{token}）{action_hint}")
 
     def update_remove_button(self) -> None:
         if self.game.current_player == 2 and self.game.can_remove():
@@ -369,10 +381,10 @@ class Hex3TabooGUI:
 
 
 def _print_instructions(game: Hex3TabooGame) -> None:
-    print("Hex 3-Taboo CLI Prototype")
-    print("Board radius:", game.board.radius)
-    print("Coordinates use axial (q, r) pairs. Example: place 0 0")
-    print("Player 1 uses X, Player 2 uses O. Player 2 may remove once per game.")
+    print("Hex 3-Taboo CLI プロトタイプ")
+    print("盤の半径:", game.board.radius)
+    print("座標は軸座標 (q, r) で指定します。例: place 0 0")
+    print("プレイヤー1はX、プレイヤー2はOを使用します。プレイヤー2は1回だけ取り除けます。")
 
 
 def run_cli(radius: int = 4) -> None:
@@ -383,13 +395,13 @@ def run_cli(radius: int = 4) -> None:
         try:
             command = input(game.format_prompt())
         except EOFError:
-            print("\nGame aborted.")
+            print("\nゲームを中断しました。")
             break
         try:
             acting_player = game.current_player
             result = game.take_turn(command)
         except Exception as exc:  # broad for CLI feedback
-            print(f"Error: {exc}")
+            print(f"エラー: {exc}")
             continue
         else:
             if (
@@ -399,10 +411,11 @@ def run_cli(radius: int = 4) -> None:
             ):
                 coord = game.history[-1].coordinate
                 if coord is not None:
-                    print(f"Removed opponent stone at {coord}.")
+                    print(f"相手の石{coord}を取り除きました。")
         if result:
+            outcome, message = result
             print(game.board.render())
-            print(result)
+            print(message)
             break
 
 
@@ -415,13 +428,13 @@ def run_gui(radius: int = 4) -> None:
 def main(argv: Optional[List[str]] = None) -> None:
     import argparse
 
-    parser = argparse.ArgumentParser(description="Hex 3-Taboo prototype")
-    parser.add_argument("--radius", type=int, default=4, help="Board radius (default: 4)")
+    parser = argparse.ArgumentParser(description="Hex 3-Taboo プロトタイプ")
+    parser.add_argument("--radius", type=int, default=4, help="盤の半径 (既定値: 4)")
     parser.add_argument(
         "--mode",
         choices=("cli", "gui"),
         default="cli",
-        help="Run in command-line or GUI mode.",
+        help="CLI または GUI モードで実行します。",
     )
     args = parser.parse_args(argv)
 
