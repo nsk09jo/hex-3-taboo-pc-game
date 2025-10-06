@@ -1,147 +1,147 @@
-# Hex 3‑Taboo PC Adaptation Plan
+# Hex 3-Taboo PC Adaptation Plan（Hex 3-Taboo PC版開発計画）
 
-## 1. Concept and game design
+## 1. コンセプトとゲームデザイン
 
-**Summary**: Hex 3‑Taboo is a two‑player abstract strategy game played on a hexagonal grid. Players take turns placing stones of their color on any empty hex. The goal is to create a straight line of four or more connected stones (4‑in‑a‑row) to win while avoiding creating an isolated three‑stone line (exactly three in a row). A 3‑in‑a‑row line that is part of a longer line (length ≥4) does not trigger the loss penalty; wins override losses. These rules encourage players to build longer connections while carefully managing intermediate patterns.
+**概要**: Hex 3-Taboo は六角形グリッドを使用する2人用の抽象戦略ゲームです。プレイヤーは交互に自分の色の石を空いているマスに置き、4個以上の一直線の連結を作れば勝利、ただし孤立した3連を作ってしまうと敗北します（ただし4個以上の連結に含まれる3連はペナルティにならず、勝利が敗北条件より優先されます）。このルールにより、プレイヤーは長い連結を目指しつつ途中の形に注意する必要があります。
 
-### Board geometry
+### 盤面の形状
 
-- The board is a regular hexagonal tiling truncated to a finite radius *R*. A radius of 4 (61 cells) provides a balanced play space; radius 5 (91 cells) is an option for longer games.
-- The board has three principal axes at 60° intervals. Lines are defined along these axes; only perfectly straight lines count towards win/loss conditions—bent lines do not.
+- 盤面は半径 *R* の正六角形を切り取った格子で構成します。バランスの取れたプレイフィールドとしては半径4（61マス）が推奨で、長めのゲームには半径5（91マス）も選択肢です。
+- 盤面には60°間隔の3つの主軸があり、ラインはこれらの軸に沿って定義されます。曲がったラインはカウントされず、完全な直線のみが勝敗条件に関わります。
 
-### Turn sequence
+### ターン進行
 
-1. Players alternate turns; no passes are allowed.
-2. **Placement**: On their turn a player must either:
-   - **Place** one stone of their color on any empty cell.
-   - **Neutralize (once per game, for the second player only)**: The second player may once per game, instead of placing a stone, neutralize the opponent’s last placed stone. The target stone remains on the board but becomes neutral (belongs to neither player). Neutralizing concludes the turn and cannot be used to negate a win already recorded.
-3. **Evaluation order** (at the end of each turn):
-  - **Victory**: If the just‑placed player (or the player whose neutralization ended the turn) has at least one straight line of four or more consecutive stones of their color, they win immediately.
-   - **Loss**: If they have no winning line but have one or more straight lines that are exactly three stones long (neither shorter nor longer), they lose immediately.
-   - If neither condition is met, play continues. If the board fills without a win/loss, the game is a draw.
-4. **Equal outcomes**: If a turn simultaneously produces a winning line and an exactly three‑stone line, the win takes precedence.
+1. プレイヤーは交互に手番を行い、パスはできません。
+2. **手番の行動**: 手番プレイヤーは以下のいずれかを必ず行います。
+   - **石を置く**: 任意の空きマスに自分の色の石を1つ置きます。
+   - **無効化（後手のみ、ゲーム中1回）**: 後手プレイヤーはゲーム中に1回だけ、石を置く代わりに直前に相手が置いた石を無効化できます。無効化された石は盤上に残りますが、どちらのプレイヤーにも属しません。無効化でターンは終了し、すでに成立した勝利を取り消すことはできません。
+3. **ターン終了時の判定順序**:
+   - **勝利判定**: 手番を終えたプレイヤーが自色の石で4個以上連続する直線を1つでも作っていれば即座に勝利します。
+   - **敗北判定**: 勝利ラインがない場合に、自色の石でちょうど3個の直線が存在するとその場で敗北します（短くも長くもない3連のみが対象）。
+   - どちらの条件も満たさなければゲームは継続します。盤面が埋まり勝敗がつかない場合は引き分けです。
+4. **同時成立**: 勝利条件と3連敗北条件が同時に発生した場合、勝利が優先されます。
 
-### Additional match rules
+### 追加ルール
 
-- **Time control**: For online play or tournaments, configurable timers (e.g., 10 min per player with a 10 second increment) ensure fairness.
-- **Scoring series**: In match play the first player can be alternated or balanced via series; track wins, losses, draws and second‑player advantages (the neutralization ability only applies to the second player in each game).
+- **持ち時間**: オンライン対戦や大会では、各プレイヤー10分＋1手10秒加算など柔軟なタイマーを設定して公平性を保ちます。
+- **シリーズ戦の記録**: 複数戦を行う場合は先手/後手を交互にし、勝敗や引き分け、後手にのみ適用される無効化権の使用状況を記録します。
 
-## 2. Digital adaptation goals
+## 2. デジタル化の目標
 
-Designing a PC version requires translating the tactile board into an intuitive, responsive digital experience. Modern digital board games provide automated rule enforcement, tutorials, and online multiplayer. Our goals for the PC adaptation are:
+PC版ではアナログ盤の感覚を保ちつつ、直感的で反応の良いデジタル体験を実現します。現代のデジタルボードゲームはルール自動判定やチュートリアル、オンライン対戦を備えているため、以下を目標とします。
 
-1. **Ease of learning**  
-   - Integrate an interactive tutorial that demonstrates placement, neutralization, and the win/lose conditions. Digital board games benefit from built‑in lessons and visual aids.
-   - Provide tooltips and optional hints that highlight potential 3‑in‑a‑row risks and 4‑in‑a‑row opportunities.  
-   - Offer rule summaries and glossary accessible at any time.
+1. **学習しやすさ**
+   - 盤面の配置、無効化、勝敗条件を段階的に示すインタラクティブなチュートリアルを組み込みます。
+   - 3連のリスクや4連のチャンスを視覚的に示すツールチップやヒント機能を提供します。
+   - いつでも参照できるルールサマリーや用語集を用意します。
 
-2. **Automated setup and rule enforcement**  
-   - The software automatically provides an empty board at the start, enforces alternating turns, and prohibits invalid moves.  
-   - Win/loss conditions are checked programmatically at the end of each turn, eliminating disputes over scoring.
+2. **自動セットアップとルール判定**
+   - ソフトウェアが自動で空の盤面を用意し、交互手番や無効な手を制御します。
+   - ターン終了時に勝敗条件を自動チェックし、判定の齟齬を防ぎます。
 
-3. **User interface**  
-   - **Board rendering**: Implement a clean 2D top‑down view of the hex grid with subtle shading and coordinates. When a player hovers over a cell, highlight potential placement.  
-   - **Line highlighting**: When a line of two or more consecutive stones is created, highlight it briefly; highlight winning lines distinctly and mark exactly three‑stone lines with warning colors or rings.  
-   - **Neutralization indicator**: Show a “neutralize” button for the second player until it is used; on click, highlight only the opponent’s most recent stone as eligible.
-   - **Accessibility**: Provide color‑blind friendly palettes and adjustable size/zoom.
+3. **ユーザーインターフェース**
+   - **盤面描画**: 六角形グリッドを俯瞰で描画し、柔らかな陰影と座標表示を用意します。マスにカーソルを合わせると配置候補をハイライトします。
+   - **ラインのハイライト**: 2個以上の連結ができたときは短時間ハイライトし、勝利ラインは特別な演出で表示、ちょうど3連には警告色やリングで注意喚起します。
+   - **無効化インジケーター**: 後手の無効化権が残っている間はボタンを表示し、選択時に相手の直前の石のみハイライトします。
+   - **アクセシビリティ**: 色覚多様性に配慮したパレットや盤面サイズ/ズームの調整機能を提供します。
 
-4. **Modes of play**  
-   - **Local hot‑seat**: Two players share a computer.  
-   - **Versus AI**: Provide AI opponents with adjustable difficulty; AI may use heuristic evaluation functions (connectivity, threat blocking).  
-   - **Online multiplayer**: Support networked games via a lobby; players can invite friends or play ranked matches.  
-   - **Practice mode**: Allow single‑player sandboxing with undo/redo and analysis tools.
+4. **プレイモード**
+   - **ローカル対戦**: 1台のPCを共有して対局。
+   - **対AI戦**: 強さを調整できるAIと対戦できるモード。AIは連結評価や脅威ブロックなどのヒューリスティックを利用します。
+   - **オンライン対戦**: ロビーを用いたネットワーク対戦。フレンド招待やランクマッチをサポートします。
+   - **練習モード**: 1人で自由に検討できるサンドボックス。アンドゥ/リドゥや分析ツールを備えます。
 
-5. **Quality of life**  
-   - **Undo / redo**: In practice and local modes, allow players to undo the last move (except when a win or loss has been declared).  
-   - **Save / load**: Save games to disk and reload them later.  
-   - **Statistics and analysis**: Track win/loss ratios, average turn count, and highlight common patterns to help players improve.
+5. **快適性の向上**
+   - **アンドゥ / リドゥ**: 練習・ローカルモードでは直前の手を取り消せるようにします（勝敗確定後は不可）。
+   - **セーブ / ロード**: 対局を保存し、後から再開できる機能を搭載します。
+   - **統計と分析**: 勝率や平均手数、頻出パターンを記録し、プレイヤーの向上をサポートします。
 
-6. **Platform and distribution**  
-   - Target Windows, macOS, and Linux; consider engines such as Unity (C#), Godot (GDScript/C#), or a web‑based implementation (TypeScript/React) packaged as a desktop app via Electron.  
-   - Distribute via Steam or Itch.io; incorporate achievements and leaderboards for engagement.
+6. **プラットフォームと配信**
+   - Windows / macOS / Linux を対象とし、Unity（C#）、Godot（GDScript/C#）、Webベース（TypeScript/React + Electron）などを検討します。
+   - Steam や Itch.io で配信し、実績やリーダーボードでエンゲージメントを高めます。
 
-## 3. Technical architecture
+## 3. 技術アーキテクチャ
 
-- **Core game engine**  
-  - Maintain the board state in a two‑dimensional axial coordinate array.  
-  - Implement algorithms to detect straight lines along three axes quickly after each move; scan outward from the new stone to count consecutive stones and determine whether a line is exactly three or four or more.  
-  - Encapsulate rules (turn order, neutralization, win/loss detection) in a single authoritative game state class.
-  - Provide a history stack to enable undo/redo.
+- **コアゲームエンジン**
+  - 盤面状態を2次元の軸座標配列で管理します。
+  - 各手番後に新しい石を起点に3方向へ走査し、直線の長さをカウントして3連/4連以上を判定します。
+  - ターン管理、無効化、勝敗判定を1つのゲームステートクラスに集約します。
+  - 履歴スタックを保持してアンドゥ/リドゥを実現します。
 
-- **User interface layer**  
-  - Use a scene graph or component library to render the hex grid. Each cell is clickable and can display states: empty, occupied by player 1, occupied by player 2, highlighted.  
-  - Compose UI panels for player info, timers, move history, and settings.  
-  - Implement animations (e.g., fade‑in stone placement, line glow) with a tweening library to enhance feedback.
+- **ユーザーインターフェース層**
+  - シーングラフやコンポーネントライブラリを用いて六角マスを描画し、クリック可能なセル状態（空、自石、相手石、ハイライト）を表現します。
+  - プレイヤー情報、タイマー、手順記録、設定などのUIパネルを構成します。
+  - 石のフェードインやライン点灯などのアニメーションをトゥイーンライブラリで実装し、フィードバックを強化します。
 
-- **Networking (for online play)**  
-  - Implement a client‑server architecture using WebSockets or a real‑time game server library.  
-  - Handle matchmaking, game state synchronization, and latency compensation.  
-  - Persist match results in a server database for leaderboards.
+- **ネットワーク（オンライン対戦）**
+  - WebSocket などのリアルタイム通信を用いたクライアント/サーバー構成を実装します。
+  - マッチメイキング、ゲーム状態同期、レイテンシ補正を管理します。
+  - リーダーボード向けに試合結果をサーバーデータベースへ保存します。
 
-- **Artificial intelligence**  
-  - Start with simple heuristics: maximize own potential connections, block opponent’s threats, use the neutralization ability strategically.
-  - Optionally implement Monte Carlo Tree Search (MCTS) or minimax with alpha‑beta pruning for stronger AI.
+- **人工知能**
+  - 初期実装では自陣連結の最大化、相手の脅威遮断、無効化の戦略的使用を重視したヒューリスティック評価を用います。
+  - より高度なAIとして Monte Carlo Tree Search（MCTS）や α-β法を用いたミニマックスを検討します。
 
-- **Tutorial scripting**  
-  - Design a sequence of scripted steps demonstrating placement, losing with three in a row, winning with four, and using the neutralization ability.
-  - Use overlay text, arrows, and interactive prompts to guide players through each mechanic.
+- **チュートリアルスクリプト**
+  - 石の配置、3連による敗北、4連での勝利、無効化の使い方を順番に示すシナリオを設計します。
+  - オーバーレイのテキスト、矢印、インタラクティブな指示で各メカニクスを案内します。
 
-## 4. Development roadmap
+## 4. 開発ロードマップ
 
-1. **Pre‑production (Weeks 1‑2)**  
-   - Finalize game design and digital adaptation requirements.  
-   - Choose engine/technology stack.  
-   - Create visual mock‑ups of the board and UI.
+1. **プリプロダクション（1〜2週）**
+   - ゲームデザインとデジタル要件の確定。
+   - 使用エンジン／技術スタックの選定。
+   - 盤面とUIのビジュアルモックアップ作成。
 
-2. **Core engine implementation (Weeks 3‑4)**  
-   - Implement board data structure and turn logic.  
-   - Implement win/loss detection and the neutralization mechanic.
-   - Build a simple command‑line prototype for testing rules.
+2. **コアエンジン実装（3〜4週）**
+   - 盤面データ構造とターンロジックの実装。
+   - 勝敗判定と無効化メカニクスの実装。
+   - ルール検証のための簡易CLIプロトタイプ構築。
 
-3. **User interface (Weeks 5‑7)**  
-   - Render the hex grid and implement input handling.  
-   - Create HUD elements (player indicators, timers, remove button).  
-   - Add visual feedback for line formation, wins, losses, and invalid moves.
+3. **ユーザーインターフェース（5〜7週）**
+   - 六角グリッドの描画と入力処理の実装。
+   - プレイヤー表示、タイマー、削除ボタンなどHUD要素の作成。
+   - ライン形成、勝利、敗北、無効手の視覚フィードバックを追加。
 
-4. **Single‑player and AI (Weeks 8‑9)**  
-   - Integrate AI opponents with basic heuristics.  
-   - Add undo/redo and game save functionality.  
-   - Implement local hot‑seat mode.
+4. **シングルプレイとAI（8〜9週）**
+   - 基本ヒューリスティックを備えたAI対戦機能の統合。
+   - アンドゥ/リドゥおよびセーブ機能の追加。
+   - ローカルホットシートモードの実装。
 
-5. **Tutorial and onboarding (Week 10)**  
-   - Script the interactive tutorial using engine’s UI system.  
-   - Integrate rulebook/FAQ accessible in game.
+5. **チュートリアルとオンボーディング（10週）**
+   - エンジンのUI機能を用いてインタラクティブチュートリアルをスクリプト化。
+   - ゲーム内からアクセスできるルールブック/FAQを実装。
 
-6. **Online multiplayer (Weeks 11‑14)**  
-   - Develop matchmaking and network synchronization.  
-   - Implement user accounts and rating system if applicable.  
-   - Conduct closed beta testing to gather feedback on latency and fairness.
+6. **オンラインマルチプレイ（11〜14週）**
+   - マッチメイキングとネットワーク同期機能の開発。
+   - 必要に応じてユーザーアカウントやレーティングシステムを導入。
+   - レイテンシと公平性を検証するクローズドベータテストを実施。
 
-7. **Polish and launch (Weeks 15‑16)**  
-   - Refine UI aesthetics, animations, and audio.  
-   - Implement achievements, leaderboards, and analytics.  
-   - Optimize performance and fix bugs.  
-   - Prepare marketing materials and launch on distribution platforms.
+7. **磨き込みとローンチ（15〜16週）**
+   - UI、美術、アニメーション、サウンドのブラッシュアップ。
+   - 実績、リーダーボード、アナリティクスの実装。
+   - パフォーマンス最適化とバグ修正。
+   - マーケティング素材の準備と配信プラットフォームでのローンチ。
 
-## 5. Future enhancements
+## 5. 将来的な拡張
 
-- **Variant rules**: Option to adjust board size, change the neutralization mechanic to other balancing schemes (e.g., swap or double move), or introduce additional stones with special effects.
-- **Cross‑platform support**: Extend to mobile (iOS/Android) and browser with shared codebase.
-- **Spectator mode and replay system**: Allow others to watch games live or review completed games with move-by-move playback.
-- **Community content**: Enable users to create custom boards, themes, and rule sets.
+- **バリアントルール**: 盤面サイズの変更、無効化に代わるバランス調整（スワップ、連続手など）、特殊効果を持つ石の導入などを検討します。
+- **クロスプラットフォーム対応**: モバイル（iOS/Android）やブラウザ版への展開を行い、コードベースを共有します。
+- **観戦モードとリプレイ**: 他プレイヤーがリアルタイムで観戦したり、完了済みの対局を手順再生できる機能を提供します。
+- **コミュニティコンテンツ**: カスタム盤面、テーマ、ルールセットをユーザーが作成・共有できるようにします。
 
-## Running the prototype
+## プロトタイプの実行方法
 
-Install Python 3.8+ with Tkinter. To play from the command line:
+Python 3.8+（Tkinter含む）をインストールしてください。コマンドラインでプレイする場合:
 
 ```bash
 python hex3_taboo.py --mode cli
 ```
 
-To launch the GUI version instead (requires Tkinter):
+GUI版を起動する場合（Tkinterが必要）:
 
 ```bash
 python hex3_taboo.py --mode gui
 ```
 
-You can adjust the board radius in either mode with `--radius` (default 4).
+いずれのモードでも `--radius` オプションで盤面半径を変更できます（デフォルトは4）。
