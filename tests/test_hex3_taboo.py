@@ -38,7 +38,9 @@ class Hex3TabooGameTests(unittest.TestCase):
         for command in commands:
             result = game.take_turn(command)
         self.assertIsNotNone(result)
-        self.assertIn("loses", result)
+        outcome, message = result
+        self.assertEqual(outcome, "loss")
+        self.assertIn("敗北", message)
         self.assertEqual(game.current_player, 1)
 
     def test_win_on_four_in_a_row(self):
@@ -56,7 +58,9 @@ class Hex3TabooGameTests(unittest.TestCase):
         for command in commands:
             result = game.take_turn(command)
         self.assertIsNotNone(result)
-        self.assertIn("wins", result)
+        outcome, message = result
+        self.assertEqual(outcome, "win")
+        self.assertIn("勝利", message)
         self.assertEqual(game.current_player, 1)
 
     def test_second_player_can_remove_only_once(self):
