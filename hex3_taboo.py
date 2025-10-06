@@ -235,7 +235,7 @@ class Hex3TabooGame:
 class Hex3TabooGUI:
     """Simple Tkinter-based interface for playing Hex 3-Taboo."""
 
-    HEX_SIZE = 30
+    DEFAULT_HEX_SIZE = 30
     EMPTY_COLOR = "#f5f5f5"
     PLAYER_COLORS = {1: "#d64550", 2: "#4072b0"}
     OUTLINE_COLOR = "#4a4a4a"
@@ -254,7 +254,8 @@ class Hex3TabooGUI:
         status_label.pack(pady=6)
 
         self.canvas = tk.Canvas(self.root, background="white", highlightthickness=0)
-        self.canvas.pack(padx=10, pady=10)
+        self.canvas.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+        self.canvas.bind("<Configure>", self.on_canvas_configure)
 
         controls = tk.Frame(self.root)
         controls.pack(pady=4)
@@ -267,34 +268,67 @@ class Hex3TabooGUI:
         )
         self.remove_button.pack()
 
+        self.canvas_width = 0
+        self.canvas_height = 0
+        self.hex_size: float = self.DEFAULT_HEX_SIZE
         self.cell_items: Dict[int, AxialCoord] = {}
-        self._draw_board()
+        self.root.update_idletasks()
+        self.canvas_width = self.canvas.winfo_width()
+        self.canvas_height = self.canvas.winfo_height()
+        if self.canvas_width > 1 and self.canvas_height > 1:
+            self._update_hex_size(self.canvas_width, self.canvas_height)
+        self._draw_board(self.canvas_width, self.canvas_height)
         self.update_board()
         self.update_status()
 
     def run(self) -> None:
         self.root.mainloop()
 
-    def _draw_board(self) -> None:
+    def _draw_board(
+        self, canvas_width: Optional[int] = None, canvas_height: Optional[int] = None
+    ) -> None:
+        width = (
+            canvas_width
+            if canvas_width is not None
+            else self.canvas_width
+            if self.canvas_width > 1
+            else self.canvas.winfo_width()
+        )
+        height = (
+            canvas_height
+            if canvas_height is not None
+            else self.canvas_height
+            if self.canvas_height > 1
+            else self.canvas.winfo_height()
+        )
+        if width <= 1 or height <= 1:
+            return
+
+        self.canvas_width = width
+        self.canvas_height = height
+
         coordinates = list(self.game.board.cells.keys())
-        positions = {coord: self._axial_to_pixel(coord) for coord in coordinates}
-
-        min_x = min(x for x, _ in positions.values()) - self.HEX_SIZE
-        max_x = max(x for x, _ in positions.values()) + self.HEX_SIZE
-        min_y = min(y for _, y in positions.values()) - self.HEX_SIZE
-        max_y = max(y for _, y in positions.values()) + self.HEX_SIZE
-
-        width = int(math.ceil(max_x - min_x))
-        height = int(math.ceil(max_y - min_y))
-        self.canvas.config(width=width, height=height)
+        bounds = self._board_bounds(self.hex_size)
+        min_x, max_x, min_y, max_y = bounds
+        board_width = max_x - min_x
+        board_height = max_y - min_y
+        offset_x = (width - board_width) / 2 - min_x
+        offset_y = (height - board_height) / 2 - min_y
 
         self.canvas.delete("all")
         self.cell_items.clear()
 
-        for coord, (x, y) in positions.items():
-            polygon_points = self._hexagon_points(x - min_x, y - min_y)
+        for coord in coordinates:
+            x, y = self._axial_to_pixel(coord)
+            polygon_points = self._hexagon_points(x, y)
+            shifted_points: List[float] = []
+            for index, value in enumerate(polygon_points):
+                if index % 2 == 0:
+                    shifted_points.append(value + offset_x)
+                else:
+                    shifted_points.append(value + offset_y)
             item = self.canvas.create_polygon(
-                polygon_points,
+                shifted_points,
                 outline=self.OUTLINE_COLOR,
                 fill=self.EMPTY_COLOR,
                 width=2,
@@ -303,20 +337,55 @@ class Hex3TabooGUI:
             self.canvas.tag_bind(item, "<Button-1>", lambda _event, c=coord: self.on_cell_clicked(c))
             self.cell_items[item] = coord
 
-    def _axial_to_pixel(self, coord: AxialCoord) -> Tuple[float, float]:
+    def _axial_to_pixel(self, coord: AxialCoord, hex_size: Optional[float] = None) -> Tuple[float, float]:
+        size = hex_size if hex_size is not None else self.hex_size
         q, r = coord
-        x = self.HEX_SIZE * math.sqrt(3) * (q + r / 2)
-        y = self.HEX_SIZE * 1.5 * r
+        x = size * math.sqrt(3) * (q + r / 2)
+        y = size * 1.5 * r
         return x, y
 
-    def _hexagon_points(self, center_x: float, center_y: float) -> List[float]:
+    def _hexagon_points(self, center_x: float, center_y: float, hex_size: Optional[float] = None) -> List[float]:
+        size = hex_size if hex_size is not None else self.hex_size
         points: List[float] = []
         for i in range(6):
             angle = math.radians(60 * i - 30)
-            x = center_x + self.HEX_SIZE * math.cos(angle)
-            y = center_y + self.HEX_SIZE * math.sin(angle)
+            x = center_x + size * math.cos(angle)
+            y = center_y + size * math.sin(angle)
             points.extend((x, y))
         return points
+
+    def _board_bounds(self, hex_size: float) -> Tuple[float, float, float, float]:
+        min_x = float("inf")
+        max_x = float("-inf")
+        min_y = float("inf")
+        max_y = float("-inf")
+        for coord in self.game.board.cells.keys():
+            polygon = self._hexagon_points(*self._axial_to_pixel(coord, hex_size), hex_size)
+            for index in range(0, len(polygon), 2):
+                x = polygon[index]
+                y = polygon[index + 1]
+                if x < min_x:
+                    min_x = x
+                if x > max_x:
+                    max_x = x
+                if y < min_y:
+                    min_y = y
+                if y > max_y:
+                    max_y = y
+        if not math.isfinite(min_x):
+            min_x = max_x = min_y = max_y = 0.0
+        return min_x, max_x, min_y, max_y
+
+    def _update_hex_size(self, canvas_width: int, canvas_height: int) -> None:
+        base_min_x, base_max_x, base_min_y, base_max_y = self._board_bounds(1.0)
+        board_width = base_max_x - base_min_x
+        board_height = base_max_y - base_min_y
+        if board_width <= 0 or board_height <= 0:
+            return
+        scale = min(canvas_width / board_width, canvas_height / board_height)
+        target_size = max(5.0, scale * 0.9)
+        if abs(target_size - self.hex_size) > 1e-6:
+            self.hex_size = target_size
 
     def on_cell_clicked(self, coord: AxialCoord) -> None:
         try:
@@ -360,7 +429,9 @@ class Hex3TabooGUI:
     def reset_game(self) -> None:
         """Reset the board for a new game."""
         self.game = Hex3TabooGame(radius=self.board_radius)
-        self._draw_board()
+        if self.canvas_width > 1 and self.canvas_height > 1:
+            self._update_hex_size(self.canvas_width, self.canvas_height)
+        self._draw_board(self.canvas_width, self.canvas_height)
         self.update_board()
         self.update_status()
 
@@ -388,6 +459,13 @@ class Hex3TabooGUI:
             self.remove_button.config(state=tk.NORMAL)
         else:
             self.remove_button.config(state=tk.DISABLED)
+
+    def on_canvas_configure(self, event: tk.Event) -> None:  # type: ignore[override]
+        if event.width <= 1 or event.height <= 1:
+            return
+        self._update_hex_size(event.width, event.height)
+        self._draw_board(event.width, event.height)
+        self.update_board()
 
 
 def _print_instructions(game: Hex3TabooGame) -> None:
