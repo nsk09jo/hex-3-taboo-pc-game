@@ -244,6 +244,10 @@ class Hex3TabooGUI:
     EMPTY_COLOR = "#f5f5f5"
     PLAYER_COLORS = {1: "#d64550", 2: "#4072b0"}
     OUTLINE_COLOR = "#4a4a4a"
+    HOVER_ALPHA = 0.55
+    GENERAL_HIGHLIGHT_DURATION = 600
+    WARNING_HIGHLIGHT_DURATION = 900
+    VICTORY_HIGHLIGHT_DURATION = 1600
 
     def __init__(self, game: Hex3TabooGame) -> None:
         if tk is None:
@@ -275,6 +279,14 @@ class Hex3TabooGUI:
 
         self.hex_size: float = self.DEFAULT_HEX_SIZE
         self.cell_items: Dict[int, AxialCoord] = {}
+        self.coord_to_items: Dict[AxialCoord, int] = {}
+        self.coord_label_items: Dict[AxialCoord, int] = {}
+        self.cell_polygons: Dict[AxialCoord, List[float]] = {}
+        self.cell_centers: Dict[AxialCoord, Tuple[float, float]] = {}
+        self.base_colors: Dict[AxialCoord, str] = {}
+        self.hovered_coord: Optional[AxialCoord] = None
+        self.highlight_items: List[int] = []
+        self.highlight_after_ids: List[str] = []
         self._draw_board()
         self.update_board()
         self.update_status()
@@ -299,7 +311,12 @@ class Hex3TabooGUI:
         offset_y = (canvas_height - board_height) / 2 - min_y
 
         self.canvas.delete("all")
+        self._reset_highlight_state()
         self.cell_items.clear()
+        self.coord_to_items.clear()
+        self.coord_label_items.clear()
+        self.cell_polygons.clear()
+        self.cell_centers.clear()
 
         for coord in coordinates:
             x, y = self._axial_to_pixel(coord)
@@ -317,8 +334,26 @@ class Hex3TabooGUI:
                 width=2,
                 tags=("cell",),
             )
+            label = self.canvas.create_text(
+                x + offset_x,
+                y + offset_y,
+                text=f"{coord[0]},{coord[1]}",
+                fill="#6d6d6d",
+                font=("Helvetica", max(8, int(self.hex_size * 0.28))),
+                tags=("coord_label",),
+            )
+            self.canvas.tag_raise(label)
             self.canvas.tag_bind(item, "<Button-1>", lambda _event, c=coord: self.on_cell_clicked(c))
+            self.canvas.tag_bind(label, "<Button-1>", lambda _event, c=coord: self.on_cell_clicked(c))
+            self.canvas.tag_bind(item, "<Enter>", lambda _event, c=coord: self.on_cell_hover(c))
+            self.canvas.tag_bind(item, "<Leave>", lambda _event, c=coord: self.on_cell_hover_end(c))
+            self.canvas.tag_bind(label, "<Enter>", lambda _event, c=coord: self.on_cell_hover(c))
+            self.canvas.tag_bind(label, "<Leave>", lambda _event, c=coord: self.on_cell_hover_end(c))
             self.cell_items[item] = coord
+            self.coord_to_items[coord] = item
+            self.coord_label_items[coord] = label
+            self.cell_polygons[coord] = shifted_points
+            self.cell_centers[coord] = (x + offset_x, y + offset_y)
 
     def _axial_to_pixel(self, coord: AxialCoord, hex_size: Optional[float] = None) -> Tuple[float, float]:
         size = hex_size if hex_size is not None else self.hex_size
@@ -395,6 +430,7 @@ class Hex3TabooGUI:
     def _finalize_turn(self, acting_player: int) -> None:
         result = self.game.check_game_end()
         self.update_board()
+        self._highlight_recent_lines(acting_player, result)
         if result:
             outcome, message = result
             self.status_var.set(message)
@@ -402,6 +438,11 @@ class Hex3TabooGUI:
             if messagebox is not None:
                 messagebox.showinfo("ゲーム終了", message)
             self.canvas.tag_unbind("cell", "<Button-1>")
+            self.canvas.tag_unbind("coord_label", "<Button-1>")
+            self.canvas.tag_unbind("cell", "<Enter>")
+            self.canvas.tag_unbind("cell", "<Leave>")
+            self.canvas.tag_unbind("coord_label", "<Enter>")
+            self.canvas.tag_unbind("coord_label", "<Leave>")
             if outcome == "win":
                 self.root.after(200, self.reset_game)
             return
@@ -423,10 +464,24 @@ class Hex3TabooGUI:
             1: self.PLAYER_COLORS[1],
             2: self.PLAYER_COLORS[2],
         }
-        for item_id, coord in self.cell_items.items():
+        for coord, item_id in self.coord_to_items.items():
             occupant = self.game.board.cells[coord]
-            self.canvas.itemconfig(item_id, fill=occupant_to_color[occupant])
+            base_color = occupant_to_color[occupant]
+            shaded = self._apply_shading(coord, base_color)
+            self.base_colors[coord] = shaded
+            self.canvas.itemconfig(item_id, fill=shaded, outline=self.OUTLINE_COLOR, width=2)
+            text_id = self.coord_label_items.get(coord)
+            if text_id is not None:
+                if occupant is None:
+                    text_color = "#585858"
+                elif occupant == HexBoard.DISABLED_STONE:
+                    text_color = "#3d3d3d"
+                else:
+                    text_color = "#ffffff"
+                self.canvas.itemconfig(text_id, fill=text_color)
+                self.canvas.tag_raise(text_id)
         self.update_remove_button()
+        self.update_hover_visual()
 
     def update_status(self) -> None:
         token = "X" if self.game.current_player == 1 else "O"
@@ -448,6 +503,207 @@ class Hex3TabooGUI:
         self._update_hex_size(event.width, event.height)
         self._draw_board()
         self.update_board()
+
+    def on_cell_hover(self, coord: AxialCoord) -> None:
+        self.hovered_coord = coord
+        self.update_hover_visual()
+
+    def on_cell_hover_end(self, coord: AxialCoord) -> None:
+        if self.hovered_coord == coord:
+            self.hovered_coord = None
+            self.update_hover_visual()
+
+    def update_hover_visual(self) -> None:
+        if not self.coord_to_items:
+            return
+        for coord, item_id in self.coord_to_items.items():
+            base_color = self.base_colors.get(coord)
+            if base_color is not None:
+                self.canvas.itemconfig(item_id, fill=base_color, outline=self.OUTLINE_COLOR, width=2)
+
+        if self.hovered_coord is None:
+            return
+        if not self.game.board.is_valid(self.hovered_coord):
+            return
+
+        occupant = self.game.board.cells[self.hovered_coord]
+        if occupant is not None:
+            return
+
+        forbidden = self.game.forbidden_placements.get(self.game.current_player)
+        item_id = self.coord_to_items.get(self.hovered_coord)
+        if item_id is None:
+            return
+        if forbidden is not None and forbidden == self.hovered_coord:
+            highlight_color = self._mix_with_color(self.EMPTY_COLOR, "#ffae42", 0.35)
+            outline_color = "#ffae42"
+        else:
+            player_color = self.PLAYER_COLORS[self.game.current_player]
+            highlight_color = self._mix_with_color(player_color, "#ffffff", self.HOVER_ALPHA)
+            outline_color = self._scale_color(player_color, 0.85)
+        self.canvas.itemconfig(item_id, fill=highlight_color, outline=outline_color, width=3)
+
+    def _scale_color(self, color: str, factor: float) -> str:
+        color = color.lstrip("#")
+        r = int(color[0:2], 16)
+        g = int(color[2:4], 16)
+        b = int(color[4:6], 16)
+        r = max(0, min(255, int(r * factor)))
+        g = max(0, min(255, int(g * factor)))
+        b = max(0, min(255, int(b * factor)))
+        return f"#{r:02x}{g:02x}{b:02x}"
+
+    def _mix_with_color(self, base_color: str, target_color: str, ratio: float) -> str:
+        base = base_color.lstrip("#")
+        target = target_color.lstrip("#")
+        r1, g1, b1 = int(base[0:2], 16), int(base[2:4], 16), int(base[4:6], 16)
+        r2, g2, b2 = int(target[0:2], 16), int(target[2:4], 16), int(target[4:6], 16)
+        ratio = max(0.0, min(1.0, ratio))
+        r = int(r1 * (1 - ratio) + r2 * ratio)
+        g = int(g1 * (1 - ratio) + g2 * ratio)
+        b = int(b1 * (1 - ratio) + b2 * ratio)
+        return f"#{r:02x}{g:02x}{b:02x}"
+
+    def _apply_shading(self, coord: AxialCoord, base_color: str) -> str:
+        radius = self.board_radius
+        if radius <= 0:
+            return base_color
+        q, r = coord
+        s = -q - r
+        distance = max(abs(q), abs(r), abs(s))
+        ratio = distance / float(radius)
+        factor = 1.08 - 0.22 * ratio
+        factor = max(0.75, min(1.2, factor))
+        return self._scale_color(base_color, factor)
+
+    def _reset_highlight_state(self) -> None:
+        for after_id in self.highlight_after_ids:
+            try:
+                self.canvas.after_cancel(after_id)
+            except tk.TclError:
+                pass
+        self.highlight_after_ids.clear()
+        self._remove_highlight_items()
+
+    def _remove_highlight_items(self) -> None:
+        for item in self.highlight_items:
+            self.canvas.delete(item)
+        self.highlight_items.clear()
+
+    def _schedule_highlight_cleanup(self, duration: int) -> None:
+        def clear() -> None:
+            self._remove_highlight_items()
+            if after_id in self.highlight_after_ids:
+                self.highlight_after_ids.remove(after_id)
+
+        after_id = self.canvas.after(duration, clear)
+        self.highlight_after_ids.append(after_id)
+
+    def _collect_lines(self, player: int, origin: AxialCoord) -> List[List[AxialCoord]]:
+        if origin not in self.game.board.cells:
+            return []
+        if self.game.board.cells[origin] != player:
+            return []
+        lines: List[List[AxialCoord]] = []
+        for direction in HexBoard.AXIAL_DIRECTIONS:
+            line: List[AxialCoord] = [origin]
+            for sign in (1, -1):
+                dq = direction[0] * sign
+                dr = direction[1] * sign
+                cursor = (origin[0] + dq, origin[1] + dr)
+                while self.game.board.cells.get(cursor) == player:
+                    if sign == -1:
+                        line.insert(0, cursor)
+                    else:
+                        line.append(cursor)
+                    cursor = (cursor[0] + dq, cursor[1] + dr)
+            if len(line) >= 2:
+                lines.append(line)
+        return lines
+
+    def _highlight_line(self, coords: List[AxialCoord], color: str, width: int, fill_opacity: float = 0.0) -> None:
+        line_points: List[float] = []
+        for coord in coords:
+            polygon = self.cell_polygons.get(coord)
+            if polygon:
+                overlay = self.canvas.create_polygon(
+                    polygon,
+                    outline=color,
+                    width=max(2, width - 2),
+                    fill=self._mix_with_color(color, "#ffffff", fill_opacity) if fill_opacity > 0 else "",
+                    tags=("highlight",),
+                )
+                self.highlight_items.append(overlay)
+            center = self.cell_centers.get(coord)
+            if center:
+                line_points.extend(center)
+        if len(line_points) >= 4:
+            line_id = self.canvas.create_line(
+                line_points,
+                fill=color,
+                width=width,
+                capstyle=tk.ROUND,
+                smooth=True,
+                tags=("highlight",),
+            )
+            self.highlight_items.append(line_id)
+        self.canvas.tag_raise("coord_label")
+
+    def _highlight_warning_rings(self, coords: List[AxialCoord], color: str) -> None:
+        for coord in coords:
+            center = self.cell_centers.get(coord)
+            if not center:
+                continue
+            radius = self.hex_size * 0.55
+            ring = self.canvas.create_oval(
+                center[0] - radius,
+                center[1] - radius,
+                center[0] + radius,
+                center[1] + radius,
+                outline=color,
+                width=3,
+                dash=(6, 4),
+                tags=("highlight",),
+            )
+            self.highlight_items.append(ring)
+        self.canvas.tag_raise("coord_label")
+
+    def _highlight_recent_lines(self, acting_player: int, result: Optional[GameOutcome]) -> None:
+        if not self.game.history:
+            return
+        last_move = self.game.history[-1]
+        if last_move.player != acting_player or last_move.action != "place" or last_move.coordinate is None:
+            return
+
+        origin = last_move.coordinate
+        lines = self._collect_lines(acting_player, origin)
+        if not lines:
+            return
+
+        self._reset_highlight_state()
+        is_win = result is not None and result[0] == "win"
+        is_loss = result is not None and result[0] == "loss"
+        player_color = self.PLAYER_COLORS[acting_player]
+
+        for line in lines:
+            length = len(line)
+            if length >= 4:
+                color = "#ffd166" if is_win else self._scale_color(player_color, 1.2)
+                self._highlight_line(line, color, width=8 if is_win else 5, fill_opacity=0.25 if is_win else 0.1)
+            elif length == 3:
+                warning_color = "#ff6b6b"
+                self._highlight_line(line, warning_color, width=4, fill_opacity=0.0)
+                self._highlight_warning_rings(line, warning_color)
+            else:
+                color = self._scale_color(player_color, 1.1)
+                self._highlight_line(line, color, width=3, fill_opacity=0.05)
+
+        if any(len(line) >= 4 for line in lines) and is_win:
+            self._schedule_highlight_cleanup(self.VICTORY_HIGHLIGHT_DURATION)
+        elif is_loss or any(len(line) == 3 for line in lines):
+            self._schedule_highlight_cleanup(self.WARNING_HIGHLIGHT_DURATION)
+        else:
+            self._schedule_highlight_cleanup(self.GENERAL_HIGHLIGHT_DURATION)
 
 
 def _print_instructions(game: Hex3TabooGame) -> None:
