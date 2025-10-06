@@ -312,9 +312,22 @@ class Hex3TabooGUI:
     """Simple Tkinter-based interface for playing Hex 3-Taboo."""
 
     DEFAULT_HEX_SIZE = 30
-    EMPTY_COLOR = "#f5f5f5"
+    BOARD_BACKGROUND_TOP = "#f3f7ff"
+    BOARD_BACKGROUND_BOTTOM = "#dce6f6"
+    CELL_BASE_COLOR = "#fefefe"
+    CELL_ACCENT_COLOR = "#e1e9f5"
+    CELL_EDGE_COLOR = "#9da7b7"
     PLAYER_COLORS = {1: "#d64550", 2: "#4072b0"}
+    PLAYER_OUTLINES = {1: "#7e1b26", 2: "#123b66"}
+    DISABLED_STONE_COLOR = "#aab0bc"
+    DISABLED_OUTLINE_COLOR = "#5b626f"
+    EMPTY_STONE_COLOR = "#f5f5f5"
     OUTLINE_COLOR = "#4a4a4a"
+    HOVER_OUTLINE_COLOR = "#ffb347"
+    HOVER_FILL_BLEND = 0.18
+    SHADOW_COLOR = "#2a2e45"
+    SHADOW_OFFSET = (3, 4)
+    COORD_TEXT_COLOR = "#6f7d95"
 
     def __init__(self, game: Hex3TabooGame) -> None:
         if tk is None:
@@ -354,21 +367,64 @@ class Hex3TabooGUI:
         self.hex_size: float = self.DEFAULT_HEX_SIZE
         self.cell_items: Dict[int, AxialCoord] = {}
         self.coord_to_item: Dict[AxialCoord, int] = {}
+        self.cell_shadows: Dict[AxialCoord, int] = {}
+        self.stone_items: Dict[AxialCoord, int] = {}
+        self._stone_bounds: Dict[int, Tuple[float, float, float, float]] = {}
+        self._tile_base_colors: Dict[AxialCoord, str] = {}
         self._cell_states: Dict[AxialCoord, Optional[int]] = {
             coord: None for coord in self.game.board.cells
         }
-        self._target_fill_colors: Dict[int, str] = {}
-        self._active_tweens: Dict[int, Tween] = {}
+        self._target_stone_colors: Dict[int, str] = {}
+        self._active_tweens: Dict[Tuple[int, str], Tween] = {}
         self._line_animation_items: List[int] = []
         self._line_animation_cycle = 0
         self._base_line_colors: Dict[int, str] = {}
         self._line_highlight_tween: Optional[Tween] = None
+        self._hovered_item: Optional[int] = None
         self._draw_board()
         self.update_board()
         self.update_status()
 
     def run(self) -> None:
         self.root.mainloop()
+
+    def _draw_background(self, width: int, height: int) -> None:
+        steps = 24
+        for step in range(steps):
+            factor_top = step / steps
+            factor_bottom = (step + 1) / steps
+            color = self._interpolate_color(
+                self.BOARD_BACKGROUND_TOP,
+                self.BOARD_BACKGROUND_BOTTOM,
+                (factor_top + factor_bottom) / 2,
+            )
+            y0 = height * factor_top
+            y1 = height * factor_bottom
+            self.canvas.create_rectangle(0, y0, width, y1, fill=color, outline="")
+        border_color = self._interpolate_color(
+            self.BOARD_BACKGROUND_BOTTOM, "#9fb0c9", 0.25
+        )
+        self.canvas.create_rectangle(
+            2,
+            2,
+            width - 2,
+            height - 2,
+            outline=border_color,
+            width=3,
+        )
+
+    def _compute_tile_color(self, coord: AxialCoord) -> str:
+        radius = max(1, self.board_radius)
+        normalized_q = (coord[0] + radius) / (2 * radius)
+        normalized_r = (coord[1] + radius) / (2 * radius)
+        wave = (math.sin((coord[0] - coord[1]) * math.pi / 3) + 1.0) / 2.0
+        blend = (normalized_q + normalized_r + wave) / 3.0
+        blend = max(0.0, min(1.0, blend * 0.6))
+        return self._interpolate_color(self.CELL_BASE_COLOR, self.CELL_ACCENT_COLOR, blend)
+
+    def _tile_hover_color(self, coord: AxialCoord) -> str:
+        base = self._tile_base_colors.get(coord, self.CELL_BASE_COLOR)
+        return self._interpolate_color(base, "#ffffff", self.HOVER_FILL_BLEND)
 
     def _draw_board(self) -> None:
         canvas_width = self.canvas.winfo_width()
@@ -394,6 +450,15 @@ class Hex3TabooGUI:
         self.cell_items.clear()
         self.coord_to_item.clear()
 
+        self.cell_shadows.clear()
+        self.stone_items.clear()
+        self._stone_bounds.clear()
+        self._tile_base_colors.clear()
+        self._target_stone_colors.clear()
+        self._hovered_item = None
+
+        self._draw_background(canvas_width, canvas_height)
+
         for coord in coordinates:
             x, y = self._axial_to_pixel(coord)
             polygon_points = self._hexagon_points(x, y)
@@ -403,17 +468,152 @@ class Hex3TabooGUI:
                     shifted_points.append(value + offset_x)
                 else:
                     shifted_points.append(value + offset_y)
+
+            shadow_points: List[float] = []
+            shadow_dx, shadow_dy = self.SHADOW_OFFSET
+            for index, value in enumerate(shifted_points):
+                if index % 2 == 0:
+                    shadow_points.append(value + shadow_dx)
+                else:
+                    shadow_points.append(value + shadow_dy)
+            shadow_item = self.canvas.create_polygon(
+                shadow_points,
+                outline="",
+                fill=self.SHADOW_COLOR,
+                stipple="gray50",
+                tags=("shadow",),
+            )
+            self.cell_shadows[coord] = shadow_item
+
+            tile_color = self._compute_tile_color(coord)
+            self._tile_base_colors[coord] = tile_color
             item = self.canvas.create_polygon(
                 shifted_points,
-                outline=self.OUTLINE_COLOR,
-                fill=self.EMPTY_COLOR,
+                outline=self.CELL_EDGE_COLOR,
+                fill=tile_color,
                 width=2,
+                joinstyle=tk.ROUND,
                 tags=("cell",),
             )
-            self.canvas.tag_bind(item, "<Button-1>", lambda _event, c=coord: self.on_cell_clicked(c))
             self.cell_items[item] = coord
             self.coord_to_item[coord] = item
-            self._target_fill_colors[item] = self.EMPTY_COLOR
+
+            center_x = x + offset_x
+            center_y = y + offset_y
+            stone_radius = self.hex_size * 0.48
+            stone_item = self.canvas.create_oval(
+                center_x - stone_radius,
+                center_y - stone_radius,
+                center_x + stone_radius,
+                center_y + stone_radius,
+                fill=self.EMPTY_STONE_COLOR,
+                outline=self.CELL_EDGE_COLOR,
+                width=3,
+                state=tk.HIDDEN,
+                tags=("stone",),
+            )
+            self.stone_items[coord] = stone_item
+            self._stone_bounds[stone_item] = (
+                center_x - stone_radius,
+                center_y - stone_radius,
+                center_x + stone_radius,
+                center_y + stone_radius,
+            )
+            self._target_stone_colors[stone_item] = self.EMPTY_STONE_COLOR
+
+            label_font_size = max(8, int(self.hex_size * 0.26))
+            label = self.canvas.create_text(
+                center_x,
+                center_y + self.hex_size * 0.62,
+                text=f"{coord[0]},{coord[1]}",
+                fill=self.COORD_TEXT_COLOR,
+                font=("Helvetica", label_font_size, "bold"),
+                tags=("coord_label",),
+            )
+            self.canvas.itemconfig(label, state=tk.DISABLED)
+            self.canvas.tag_lower(label)
+
+        self.canvas.tag_lower("shadow")
+        self.canvas.tag_lower("coord_label")
+        self.canvas.tag_raise("stone")
+        self.canvas.tag_bind("cell", "<Button-1>", self._handle_cell_click)
+        self.canvas.tag_bind("cell", "<Enter>", self._handle_cell_enter)
+        self.canvas.tag_bind("cell", "<Leave>", self._handle_cell_leave)
+
+    def _handle_cell_click(self, event: tk.Event) -> None:  # type: ignore[override]
+        current = event.widget.find_withtag("current")
+        if not current:
+            return
+        coord = self.cell_items.get(current[0])
+        if coord is not None:
+            self.on_cell_clicked(coord)
+
+    def _handle_cell_enter(self, event: tk.Event) -> None:  # type: ignore[override]
+        current = event.widget.find_withtag("current")
+        if not current:
+            return
+        self._on_cell_enter(current[0])
+
+    def _handle_cell_leave(self, event: tk.Event) -> None:  # type: ignore[override]
+        current = event.widget.find_withtag("current")
+        if not current:
+            return
+        self._on_cell_leave(current[0])
+
+    def _on_cell_enter(self, item_id: int) -> None:
+        if self._hovered_item == item_id:
+            return
+        coord = self.cell_items.get(item_id)
+        if coord is None:
+            return
+        self._hovered_item = item_id
+        hover_color = self._tile_hover_color(coord)
+        self.canvas.itemconfig(item_id, fill=hover_color, outline=self.HOVER_OUTLINE_COLOR, width=3)
+        stone_id = self.stone_items.get(coord)
+        if stone_id is not None:
+            self.canvas.tag_raise(stone_id)
+
+    def _on_cell_leave(self, item_id: int) -> None:
+        if self._hovered_item != item_id:
+            return
+        coord = self.cell_items.get(item_id)
+        if coord is None:
+            return
+        self._hovered_item = None
+        base_color = self._tile_base_colors.get(coord, self.CELL_BASE_COLOR)
+        self.canvas.itemconfig(item_id, fill=base_color, outline=self.CELL_EDGE_COLOR, width=2)
+
+    def _animate_stone_placement(self, stone_id: int, duration_ms: int = 260) -> None:
+        bounds = self._stone_bounds.get(stone_id)
+        if bounds is None:
+            return
+        key = (stone_id, "scale")
+        if key in self._active_tweens:
+            self._active_tweens[key].cancel()
+        x0, y0, x1, y1 = bounds
+        center_x = (x0 + x1) / 2
+        center_y = (y0 + y1) / 2
+
+        def update(progress: float) -> None:
+            eased = ease_out_quad(progress)
+            eased = max(0.0, min(1.0, eased))
+            radius_x = (x1 - x0) / 2 * eased
+            radius_y = (y1 - y0) / 2 * eased
+            self.canvas.coords(
+                stone_id,
+                center_x - radius_x,
+                center_y - radius_y,
+                center_x + radius_x,
+                center_y + radius_y,
+            )
+
+        def finish() -> None:
+            self.canvas.coords(stone_id, x0, y0, x1, y1)
+            self._active_tweens.pop(key, None)
+
+        tween = Tween(self.canvas, duration_ms, update, on_complete=finish)
+        self._active_tweens[key] = tween
+        tween.start()
 
     def _axial_to_pixel(self, coord: AxialCoord, hex_size: Optional[float] = None) -> Tuple[float, float]:
         size = hex_size if hex_size is not None else self.hex_size
@@ -497,6 +697,8 @@ class Hex3TabooGUI:
             self.remove_button.config(state=tk.DISABLED)
             if messagebox is not None:
                 messagebox.showinfo("ゲーム終了", message)
+            if self._hovered_item is not None:
+                self._on_cell_leave(self._hovered_item)
             self.canvas.tag_unbind("cell", "<Button-1>")
             if line_coords:
                 self._animate_line_highlight(line_coords)
@@ -511,7 +713,7 @@ class Hex3TabooGUI:
         self._hide_reset_button()
         self.game = Hex3TabooGame(radius=self.board_radius)
         self._cell_states = {coord: None for coord in self.game.board.cells}
-        self._target_fill_colors.clear()
+        self._target_stone_colors.clear()
         self._active_tweens.clear()
         self._stop_line_highlight()
         self._draw_board()
@@ -520,26 +722,55 @@ class Hex3TabooGUI:
 
     def update_board(self) -> None:
         occupant_to_color = {
-            None: self.EMPTY_COLOR,
-            HexBoard.DISABLED_STONE: "#bdbdbd",
+            None: self.EMPTY_STONE_COLOR,
+            HexBoard.DISABLED_STONE: self.DISABLED_STONE_COLOR,
             1: self.PLAYER_COLORS[1],
             2: self.PLAYER_COLORS[2],
         }
-        for item_id, coord in self.cell_items.items():
+        occupant_to_outline = {
+            None: self.CELL_EDGE_COLOR,
+            HexBoard.DISABLED_STONE: self.DISABLED_OUTLINE_COLOR,
+            1: self.PLAYER_OUTLINES[1],
+            2: self.PLAYER_OUTLINES[2],
+        }
+        for coord, stone_id in self.stone_items.items():
             occupant = self.game.board.cells[coord]
             target_color = occupant_to_color[occupant]
+            target_outline = occupant_to_outline[occupant]
             previous = self._cell_states.get(coord)
-            previous_color = occupant_to_color.get(previous, self.EMPTY_COLOR)
-            if previous is None and occupant is not None:
-                self._start_fill_animation(item_id, self.EMPTY_COLOR, target_color)
-            elif previous is not None and occupant is None:
-                self._start_fill_animation(item_id, previous_color, self.EMPTY_COLOR)
+            previous_color = occupant_to_color.get(previous, self.EMPTY_STONE_COLOR)
+
+            if occupant is None:
+                if previous is None:
+                    self.canvas.itemconfig(stone_id, state=tk.HIDDEN)
+                else:
+                    self._start_fill_animation(
+                        stone_id, previous_color, target_color, hide_after=True
+                    )
+                self._target_stone_colors[stone_id] = target_color
+                self._cell_states[coord] = None
+                continue
+
+            self.canvas.itemconfig(
+                stone_id,
+                state=tk.NORMAL,
+                outline=target_outline,
+                width=3,
+                dash=(3, 2) if occupant == HexBoard.DISABLED_STONE else None,
+            )
+
+            if previous is None:
+                self.canvas.itemconfig(stone_id, fill=self.EMPTY_STONE_COLOR)
+                self._start_fill_animation(stone_id, self.EMPTY_STONE_COLOR, target_color)
+                self._animate_stone_placement(stone_id)
             elif previous != occupant:
-                self._start_fill_animation(item_id, previous_color, target_color)
+                self._start_fill_animation(stone_id, previous_color, target_color)
             else:
-                self.canvas.itemconfig(item_id, fill=target_color)
-                self._target_fill_colors[item_id] = target_color
+                self.canvas.itemconfig(stone_id, fill=target_color)
+
+            self._target_stone_colors[stone_id] = target_color
             self._cell_states[coord] = occupant
+        self.canvas.tag_raise("stone")
         self.update_remove_button()
 
     def update_status(self) -> None:
@@ -585,12 +816,18 @@ class Hex3TabooGUI:
         return self._rgb_to_hex(rgb)
 
     def _start_fill_animation(
-        self, item_id: int, start_color: str, end_color: str, duration_ms: int = 250
+        self,
+        item_id: int,
+        start_color: str,
+        end_color: str,
+        duration_ms: int = 250,
+        hide_after: bool = False,
     ) -> None:
-        if item_id in self._active_tweens:
-            self._active_tweens[item_id].cancel()
-        self.canvas.itemconfig(item_id, fill=start_color)
-        self._target_fill_colors[item_id] = end_color
+        key = (item_id, "color")
+        if key in self._active_tweens:
+            self._active_tweens[key].cancel()
+        self.canvas.itemconfig(item_id, fill=start_color, state=tk.NORMAL)
+        self._target_stone_colors[item_id] = end_color
 
         def update(progress: float) -> None:
             eased = ease_out_quad(progress)
@@ -599,10 +836,15 @@ class Hex3TabooGUI:
 
         def finish() -> None:
             self.canvas.itemconfig(item_id, fill=end_color)
-            self._active_tweens.pop(item_id, None)
+            if hide_after:
+                bounds = self._stone_bounds.get(item_id)
+                if bounds:
+                    self.canvas.coords(item_id, *bounds)
+                self.canvas.itemconfig(item_id, state=tk.HIDDEN)
+            self._active_tweens.pop(key, None)
 
         tween = Tween(self.canvas, duration_ms, update, on_complete=finish)
-        self._active_tweens[item_id] = tween
+        self._active_tweens[key] = tween
         tween.start()
 
     def _stop_line_highlight(self) -> None:
@@ -621,14 +863,16 @@ class Hex3TabooGUI:
         self, coords: List[AxialCoord], highlight_color: str = "#ffd166"
     ) -> None:
         self._stop_line_highlight()
-        items = [self.coord_to_item[c] for c in coords if c in self.coord_to_item]
+        items = [self.stone_items[c] for c in coords if c in self.stone_items]
         if not items:
             return
         self._line_animation_items = items
         self._base_line_colors = {
-            item: self._target_fill_colors.get(item, self.canvas.itemcget(item, "fill"))
+            item: self._target_stone_colors.get(item, self.canvas.itemcget(item, "fill"))
             for item in items
         }
+        for item in items:
+            self.canvas.tag_raise(item)
         self._line_animation_cycle = 0
         self._run_line_highlight_cycle(highlight_color)
 
