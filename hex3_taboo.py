@@ -18,7 +18,7 @@ from dataclasses import dataclass
 import math
 import sys
 import time
-from typing import Callable, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 try:
     import tkinter as tk
@@ -312,9 +312,22 @@ class Hex3TabooGUI:
     """Simple Tkinter-based interface for playing Hex 3-Taboo."""
 
     DEFAULT_HEX_SIZE = 30
-    EMPTY_COLOR = "#f5f5f5"
+    BOARD_BACKGROUND_TOP = "#f3f7ff"
+    BOARD_BACKGROUND_BOTTOM = "#dce6f6"
+    CELL_BASE_COLOR = "#fefefe"
+    CELL_ACCENT_COLOR = "#e1e9f5"
+    CELL_EDGE_COLOR = "#9da7b7"
     PLAYER_COLORS = {1: "#d64550", 2: "#4072b0"}
+    PLAYER_OUTLINES = {1: "#7e1b26", 2: "#123b66"}
+    DISABLED_STONE_COLOR = "#aab0bc"
+    DISABLED_OUTLINE_COLOR = "#5b626f"
+    EMPTY_STONE_COLOR = "#f5f5f5"
     OUTLINE_COLOR = "#4a4a4a"
+    HOVER_OUTLINE_COLOR = "#ffb347"
+    HOVER_FILL_BLEND = 0.18
+    SHADOW_COLOR = "#2a2e45"
+    SHADOW_OFFSET = (3, 4)
+    COORD_TEXT_COLOR = "#6f7d95"
 
     def __init__(self, game: Hex3TabooGame) -> None:
         if tk is None:
@@ -354,21 +367,93 @@ class Hex3TabooGUI:
         self.hex_size: float = self.DEFAULT_HEX_SIZE
         self.cell_items: Dict[int, AxialCoord] = {}
         self.coord_to_item: Dict[AxialCoord, int] = {}
+        self.cell_shadows: Dict[AxialCoord, int] = {}
+        self._tile_base_colors: Dict[AxialCoord, str] = {}
         self._cell_states: Dict[AxialCoord, Optional[int]] = {
             coord: None for coord in self.game.board.cells
         }
-        self._target_fill_colors: Dict[int, str] = {}
-        self._active_tweens: Dict[int, Tween] = {}
+        self._target_cell_colors: Dict[int, str] = {}
+        self._active_tweens: Dict[Tuple[int, str], Tween] = {}
         self._line_animation_items: List[int] = []
         self._line_animation_cycle = 0
         self._base_line_colors: Dict[int, str] = {}
-        self._line_highlight_tween: Optional[Tween] = None
+        self._line_highlight_job: Optional[str] = None
+        self._hovered_item: Optional[int] = None
         self._draw_board()
         self.update_board()
         self.update_status()
 
     def run(self) -> None:
         self.root.mainloop()
+
+    def _draw_background(self, width: int, height: int) -> None:
+        steps = 24
+        for step in range(steps):
+            factor_top = step / steps
+            factor_bottom = (step + 1) / steps
+            color = self._interpolate_color(
+                self.BOARD_BACKGROUND_TOP,
+                self.BOARD_BACKGROUND_BOTTOM,
+                (factor_top + factor_bottom) / 2,
+            )
+            y0 = height * factor_top
+            y1 = height * factor_bottom
+            self.canvas.create_rectangle(0, y0, width, y1, fill=color, outline="")
+        border_color = self._interpolate_color(
+            self.BOARD_BACKGROUND_BOTTOM, "#9fb0c9", 0.25
+        )
+        self.canvas.create_rectangle(
+            2,
+            2,
+            width - 2,
+            height - 2,
+            outline=border_color,
+            width=3,
+        )
+
+    def _compute_tile_color(self, coord: AxialCoord) -> str:
+        radius = max(1, self.board_radius)
+        normalized_q = (coord[0] + radius) / (2 * radius)
+        normalized_r = (coord[1] + radius) / (2 * radius)
+        wave = (math.sin((coord[0] - coord[1]) * math.pi / 3) + 1.0) / 2.0
+        blend = (normalized_q + normalized_r + wave) / 3.0
+        blend = max(0.0, min(1.0, blend * 0.6))
+        return self._interpolate_color(self.CELL_BASE_COLOR, self.CELL_ACCENT_COLOR, blend)
+
+    def _tile_hover_color(self, coord: AxialCoord) -> str:
+        base = self._tile_base_colors.get(coord, self.CELL_BASE_COLOR)
+        return self._interpolate_color(base, "#ffffff", self.HOVER_FILL_BLEND)
+
+    def _target_color_for_state(
+        self, coord: AxialCoord, occupant: Optional[int]
+    ) -> str:
+        base = self._tile_base_colors.get(coord, self.CELL_BASE_COLOR)
+        if occupant is None:
+            return base
+        if occupant == HexBoard.DISABLED_STONE:
+            return self.DISABLED_STONE_COLOR
+        return self.PLAYER_COLORS.get(occupant, base)
+
+    def _outline_for_state(self, occupant: Optional[int]) -> str:
+        if occupant is None:
+            return self.CELL_EDGE_COLOR
+        if occupant == HexBoard.DISABLED_STONE:
+            return self.DISABLED_OUTLINE_COLOR
+        return self.PLAYER_OUTLINES.get(occupant, self.CELL_EDGE_COLOR)
+
+    def _current_fill_color(self, coord: AxialCoord) -> str:
+        return self._target_color_for_state(coord, self.game.board.cells[coord])
+
+    def _current_outline_color(self, coord: AxialCoord) -> str:
+        return self._outline_for_state(self.game.board.cells[coord])
+
+    def _hover_fill_color(self, coord: AxialCoord) -> str:
+        occupant = self.game.board.cells[coord]
+        if occupant is None:
+            return self._tile_hover_color(coord)
+        base = self._target_color_for_state(coord, occupant)
+        blend = 0.22 if occupant != HexBoard.DISABLED_STONE else 0.16
+        return self._interpolate_color(base, "#ffffff", blend)
 
     def _draw_board(self) -> None:
         canvas_width = self.canvas.winfo_width()
@@ -394,6 +479,13 @@ class Hex3TabooGUI:
         self.cell_items.clear()
         self.coord_to_item.clear()
 
+        self.cell_shadows.clear()
+        self._tile_base_colors.clear()
+        self._target_cell_colors.clear()
+        self._hovered_item = None
+
+        self._draw_background(canvas_width, canvas_height)
+
         for coord in coordinates:
             x, y = self._axial_to_pixel(coord)
             polygon_points = self._hexagon_points(x, y)
@@ -403,17 +495,112 @@ class Hex3TabooGUI:
                     shifted_points.append(value + offset_x)
                 else:
                     shifted_points.append(value + offset_y)
+
+            shadow_points: List[float] = []
+            shadow_dx, shadow_dy = self.SHADOW_OFFSET
+            for index, value in enumerate(shifted_points):
+                if index % 2 == 0:
+                    shadow_points.append(value + shadow_dx)
+                else:
+                    shadow_points.append(value + shadow_dy)
+            shadow_item = self.canvas.create_polygon(
+                shadow_points,
+                outline="",
+                fill=self.SHADOW_COLOR,
+                stipple="gray50",
+                tags=("shadow",),
+            )
+            self.cell_shadows[coord] = shadow_item
+
+            tile_color = self._compute_tile_color(coord)
+            self._tile_base_colors[coord] = tile_color
             item = self.canvas.create_polygon(
                 shifted_points,
-                outline=self.OUTLINE_COLOR,
-                fill=self.EMPTY_COLOR,
+                outline=self.CELL_EDGE_COLOR,
+                fill=tile_color,
                 width=2,
+                joinstyle=tk.ROUND,
                 tags=("cell",),
             )
-            self.canvas.tag_bind(item, "<Button-1>", lambda _event, c=coord: self.on_cell_clicked(c))
             self.cell_items[item] = coord
             self.coord_to_item[coord] = item
-            self._target_fill_colors[item] = self.EMPTY_COLOR
+
+            center_x = x + offset_x
+            center_y = y + offset_y
+            self._target_cell_colors[item] = tile_color
+
+            label_font_size = max(8, int(self.hex_size * 0.26))
+            label = self.canvas.create_text(
+                center_x,
+                center_y + self.hex_size * 0.62,
+                text=f"{coord[0]},{coord[1]}",
+                fill=self.COORD_TEXT_COLOR,
+                font=("Helvetica", label_font_size, "bold"),
+                tags=("coord_label",),
+            )
+            self.canvas.itemconfig(label, state=tk.DISABLED)
+            self.canvas.tag_lower(label)
+
+        self.canvas.tag_lower("shadow")
+        self.canvas.tag_lower("coord_label")
+        self.canvas.tag_bind("cell", "<Button-1>", self._handle_cell_click)
+        self.canvas.tag_bind("cell", "<Enter>", self._handle_cell_enter)
+        self.canvas.tag_bind("cell", "<Leave>", self._handle_cell_leave)
+
+    def _handle_cell_click(self, event: tk.Event) -> None:  # type: ignore[override]
+        current = event.widget.find_withtag("current")
+        if not current:
+            return
+        coord = self.cell_items.get(current[0])
+        if coord is not None:
+            self.on_cell_clicked(coord)
+
+    def _handle_cell_enter(self, event: tk.Event) -> None:  # type: ignore[override]
+        current = event.widget.find_withtag("current")
+        if not current:
+            return
+        self._on_cell_enter(current[0])
+
+    def _handle_cell_leave(self, event: tk.Event) -> None:  # type: ignore[override]
+        current = event.widget.find_withtag("current")
+        if not current:
+            return
+        self._on_cell_leave(current[0])
+
+    def _on_cell_enter(self, item_id: int) -> None:
+        if self._hovered_item == item_id:
+            return
+        coord = self.cell_items.get(item_id)
+        if coord is None:
+            return
+        self._hovered_item = item_id
+        hover_color = self._hover_fill_color(coord)
+        self.canvas.itemconfig(
+            item_id,
+            fill=hover_color,
+            outline=self.HOVER_OUTLINE_COLOR,
+            width=3,
+        )
+
+    def _on_cell_leave(self, item_id: int) -> None:
+        if self._hovered_item != item_id:
+            return
+        coord = self.cell_items.get(item_id)
+        if coord is None:
+            return
+        self._hovered_item = None
+        base_color = self._current_fill_color(coord)
+        outline_color = self._current_outline_color(coord)
+        outline_width = 2 if self.game.board.cells[coord] is None else 3
+        self.canvas.itemconfig(
+            item_id,
+            fill=base_color,
+            outline=outline_color,
+            width=outline_width,
+            dash=(3, 2)
+            if self.game.board.cells[coord] == HexBoard.DISABLED_STONE
+            else None,
+        )
 
     def _axial_to_pixel(self, coord: AxialCoord, hex_size: Optional[float] = None) -> Tuple[float, float]:
         size = hex_size if hex_size is not None else self.hex_size
@@ -497,6 +684,8 @@ class Hex3TabooGUI:
             self.remove_button.config(state=tk.DISABLED)
             if messagebox is not None:
                 messagebox.showinfo("ゲーム終了", message)
+            if self._hovered_item is not None:
+                self._on_cell_leave(self._hovered_item)
             self.canvas.tag_unbind("cell", "<Button-1>")
             if line_coords:
                 self._animate_line_highlight(line_coords)
@@ -511,7 +700,7 @@ class Hex3TabooGUI:
         self._hide_reset_button()
         self.game = Hex3TabooGame(radius=self.board_radius)
         self._cell_states = {coord: None for coord in self.game.board.cells}
-        self._target_fill_colors.clear()
+        self._target_cell_colors.clear()
         self._active_tweens.clear()
         self._stop_line_highlight()
         self._draw_board()
@@ -519,26 +708,40 @@ class Hex3TabooGUI:
         self.update_status()
 
     def update_board(self) -> None:
-        occupant_to_color = {
-            None: self.EMPTY_COLOR,
-            HexBoard.DISABLED_STONE: "#bdbdbd",
-            1: self.PLAYER_COLORS[1],
-            2: self.PLAYER_COLORS[2],
-        }
-        for item_id, coord in self.cell_items.items():
+        for coord, item_id in self.coord_to_item.items():
             occupant = self.game.board.cells[coord]
-            target_color = occupant_to_color[occupant]
+            target_color = self._target_color_for_state(coord, occupant)
+            target_outline = self._outline_for_state(occupant)
             previous = self._cell_states.get(coord)
-            previous_color = occupant_to_color.get(previous, self.EMPTY_COLOR)
-            if previous is None and occupant is not None:
-                self._start_fill_animation(item_id, self.EMPTY_COLOR, target_color)
-            elif previous is not None and occupant is None:
-                self._start_fill_animation(item_id, previous_color, self.EMPTY_COLOR)
-            elif previous != occupant:
-                self._start_fill_animation(item_id, previous_color, target_color)
+            previous_color = self._target_color_for_state(coord, previous)
+            dash_pattern = (3, 2) if occupant == HexBoard.DISABLED_STONE else None
+
+            if previous is None and occupant is None:
+                self.canvas.itemconfig(
+                    item_id,
+                    fill=target_color,
+                    outline=self.CELL_EDGE_COLOR,
+                    width=2,
+                    dash=None,
+                )
+            elif previous == occupant:
+                self.canvas.itemconfig(
+                    item_id,
+                    fill=target_color,
+                    outline=target_outline,
+                    width=3 if occupant is not None else 2,
+                    dash=dash_pattern,
+                )
             else:
-                self.canvas.itemconfig(item_id, fill=target_color)
-                self._target_fill_colors[item_id] = target_color
+                self.canvas.itemconfig(
+                    item_id,
+                    outline=target_outline,
+                    width=3 if occupant is not None else 2,
+                    dash=dash_pattern,
+                )
+                self._start_fill_animation(item_id, previous_color, target_color)
+
+            self._target_cell_colors[item_id] = target_color
             self._cell_states[coord] = occupant
         self.update_remove_button()
 
@@ -585,12 +788,17 @@ class Hex3TabooGUI:
         return self._rgb_to_hex(rgb)
 
     def _start_fill_animation(
-        self, item_id: int, start_color: str, end_color: str, duration_ms: int = 250
+        self,
+        item_id: int,
+        start_color: str,
+        end_color: str,
+        duration_ms: int = 250,
     ) -> None:
-        if item_id in self._active_tweens:
-            self._active_tweens[item_id].cancel()
-        self.canvas.itemconfig(item_id, fill=start_color)
-        self._target_fill_colors[item_id] = end_color
+        key = (item_id, "color")
+        if key in self._active_tweens:
+            self._active_tweens[key].cancel()
+        self.canvas.itemconfig(item_id, fill=start_color, state=tk.NORMAL)
+        self._target_cell_colors[item_id] = end_color
 
         def update(progress: float) -> None:
             eased = ease_out_quad(progress)
@@ -599,15 +807,19 @@ class Hex3TabooGUI:
 
         def finish() -> None:
             self.canvas.itemconfig(item_id, fill=end_color)
-            self._active_tweens.pop(item_id, None)
+            self._active_tweens.pop(key, None)
 
         tween = Tween(self.canvas, duration_ms, update, on_complete=finish)
-        self._active_tweens[item_id] = tween
+        self._active_tweens[key] = tween
         tween.start()
 
     def _stop_line_highlight(self) -> None:
-        if self._line_highlight_tween is not None:
-            self._line_highlight_tween.cancel()
+        if self._line_highlight_job is not None:
+            try:
+                self.root.after_cancel(self._line_highlight_job)
+            except Exception:
+                pass
+            self._line_highlight_job = None
         for item in self._line_animation_items:
             base_color = self._base_line_colors.get(item)
             if base_color:
@@ -615,7 +827,7 @@ class Hex3TabooGUI:
         self._line_animation_items.clear()
         self._base_line_colors.clear()
         self._line_animation_cycle = 0
-        self._line_highlight_tween = None
+        self._line_highlight_job = None
 
     def _animate_line_highlight(
         self, coords: List[AxialCoord], highlight_color: str = "#ffd166"
@@ -626,7 +838,7 @@ class Hex3TabooGUI:
             return
         self._line_animation_items = items
         self._base_line_colors = {
-            item: self._target_fill_colors.get(item, self.canvas.itemcget(item, "fill"))
+            item: self._target_cell_colors.get(item, self.canvas.itemcget(item, "fill"))
             for item in items
         }
         self._line_animation_cycle = 0
@@ -635,69 +847,25 @@ class Hex3TabooGUI:
     def _run_line_highlight_cycle(self, highlight_color: str) -> None:
         if not self._line_animation_items:
             return
-        base_colors = self._base_line_colors
-        items = list(self._line_animation_items)
 
-        def forward_complete() -> None:
-            self._line_highlight_tween = Tween(
-                self.canvas,
-                260,
-                lambda progress: self._update_line_colors(
-                    items,
-                    highlight_color,
-                    base_colors,
-                    progress,
-                ),
-                on_complete=backward_complete,
-            )
-            self._line_highlight_tween.start()
-
-        def backward_complete() -> None:
-            self._line_animation_cycle += 1
-            if self._line_animation_cycle < 3:
-                self.root.after(140, lambda: self._run_line_highlight_cycle(highlight_color))
-            else:
-                for item in items:
-                    base = base_colors.get(item)
-                    if base:
-                        self.canvas.itemconfig(item, fill=base)
-                self._line_animation_items.clear()
-                self._line_highlight_tween = None
-
-        self._line_highlight_tween = Tween(
-            self.canvas,
-            260,
-            lambda progress: self._update_line_colors(
-                items,
-                base_colors,
-                highlight_color,
-                progress,
-            ),
-            on_complete=forward_complete,
-        )
-        self._line_highlight_tween.start()
-
-    def _update_line_colors(
-        self,
-        items: List[int],
-        start_colors: Union[Dict[int, str], str],
-        end_colors: Union[Dict[int, str], str],
-        progress: float,
-    ) -> None:
-        eased = ease_out_quad(progress)
-        for item in items:
-            start_color = (
-                start_colors[item]
-                if isinstance(start_colors, dict)
-                else start_colors
-            )
-            end_color = (
-                end_colors[item]
-                if isinstance(end_colors, dict)
-                else end_colors
-            )
-            color = self._interpolate_color(start_color, end_color, eased)
+        blink_on = self._line_animation_cycle % 2 == 0
+        for item in self._line_animation_items:
+            color = highlight_color if blink_on else self._base_line_colors.get(item, highlight_color)
             self.canvas.itemconfig(item, fill=color)
+
+        self._line_animation_cycle += 1
+        if self._line_animation_cycle < 8:
+            self._line_highlight_job = self.root.after(
+                200, lambda: self._run_line_highlight_cycle(highlight_color)
+            )
+        else:
+            for item in self._line_animation_items:
+                base = self._base_line_colors.get(item)
+                if base:
+                    self.canvas.itemconfig(item, fill=base)
+            self._line_animation_items.clear()
+            self._base_line_colors.clear()
+            self._line_highlight_job = None
 
     def _show_reset_button(self) -> None:
         if not self._reset_button_visible:
