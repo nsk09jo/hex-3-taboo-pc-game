@@ -339,8 +339,21 @@ class Hex3TabooGUI:
         self.root.title("ヘックス3-タブー")
 
         self.status_var = tk.StringVar()
-        status_label = tk.Label(self.root, textvariable=self.status_var, font=("Helvetica", 12))
-        status_label.pack(pady=6)
+        self.status_label = tk.Label(
+            self.root, textvariable=self.status_var, font=("Helvetica", 12)
+        )
+        self.status_label.pack(pady=(6, 0))
+
+        self.outcome_var = tk.StringVar(value="")
+        self.outcome_label = tk.Label(
+            self.root,
+            textvariable=self.outcome_var,
+            font=("Helvetica", 14, "bold"),
+            fg="#1f2d3d",
+            wraplength=480,
+            justify=tk.CENTER,
+        )
+        self.outcome_label.pack(pady=(2, 8))
 
         self.canvas = tk.Canvas(self.root, background="white", highlightthickness=0)
         self.canvas.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
@@ -693,10 +706,9 @@ class Hex3TabooGUI:
         if result:
             _outcome, message = result
             line_coords = self.game.last_detected_line
-            self.status_var.set(message)
+            self.status_var.set("ゲーム終了")
+            self.outcome_var.set(message)
             self.remove_button.config(state=tk.DISABLED)
-            if messagebox is not None:
-                messagebox.showinfo("ゲーム終了", message)
             if self._hovered_item is not None:
                 self._on_cell_leave(self._hovered_item)
             self.canvas.tag_unbind("cell", "<Button-1>")
@@ -719,6 +731,7 @@ class Hex3TabooGUI:
         self._draw_board()
         self.update_board()
         self.update_status()
+        self.outcome_var.set("")
 
     def update_board(self) -> None:
         occupant_to_color = {
