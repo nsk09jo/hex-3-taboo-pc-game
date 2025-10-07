@@ -122,6 +122,7 @@ class Hex3TabooGame:
         # that player 2 just neutralized.
         self.forbidden_placements: Dict[int, Optional[AxialCoord]] = {1: None, 2: None}
         self.last_detected_line: List[AxialCoord] = []
+        self.last_detected_outcome: Optional[str] = None
 
     def switch_player(self) -> None:
         self.current_player = 1 if self.current_player == 2 else 2
@@ -217,19 +218,23 @@ class Hex3TabooGame:
             self.current_player
         )
         self.last_detected_line = []
+        self.last_detected_outcome = None
         if has_win and winning_line:
             self.last_detected_line = winning_line.copy()
+            self.last_detected_outcome = "win"
             return (
                 "win",
                 f"プレイヤー{self.current_player}が4つ以上の連結で勝利しました。",
             )
         if has_loss and losing_line:
             self.last_detected_line = losing_line.copy()
+            self.last_detected_outcome = "loss"
             return (
                 "loss",
                 f"プレイヤー{self.current_player}は孤立した3連で敗北しました。",
             )
         if self.board.is_full():
+            self.last_detected_outcome = "draw"
             return "draw", "ボードが埋まりました。引き分けです。"
         return None
 
@@ -328,6 +333,9 @@ class Hex3TabooGUI:
     SHADOW_COLOR = "#2a2e45"
     SHADOW_OFFSET = (3, 4)
     COORD_TEXT_COLOR = "#6f7d95"
+    HIGHLIGHT_COLORS = {"win": "#ffd166", "loss": "#ff7b7b", "draw": "#70d6ff"}
+    LINE_ANIMATION_INTERVAL_MS = 120
+    LINE_ANIMATION_STEP = math.pi / 22
 
     def __init__(self, game: Hex3TabooGame) -> None:
         if tk is None:
@@ -375,9 +383,10 @@ class Hex3TabooGUI:
         self._target_cell_colors: Dict[int, str] = {}
         self._active_tweens: Dict[Tuple[int, str], Tween] = {}
         self._line_animation_items: List[int] = []
-        self._line_animation_cycle = 0
         self._base_line_colors: Dict[int, str] = {}
         self._line_highlight_job: Optional[str] = None
+        self._line_highlight_color: str = self.HIGHLIGHT_COLORS["win"]
+        self._line_animation_phase: float = 0.0
         self._hovered_item: Optional[int] = None
         self._draw_board()
         self.update_board()
@@ -678,7 +687,7 @@ class Hex3TabooGUI:
         result = self.game.check_game_end()
         self.update_board()
         if result:
-            _outcome, message = result
+            outcome, message = result
             line_coords = self.game.last_detected_line
             self.status_var.set(message)
             self.remove_button.config(state=tk.DISABLED)
@@ -688,7 +697,8 @@ class Hex3TabooGUI:
                 self._on_cell_leave(self._hovered_item)
             self.canvas.tag_unbind("cell", "<Button-1>")
             if line_coords:
-                self._animate_line_highlight(line_coords)
+                highlight_color = self._highlight_color_for_outcome(outcome)
+                self._animate_line_highlight(line_coords, highlight_color)
             self._show_reset_button()
             return
         self.game.switch_player()
@@ -826,12 +836,16 @@ class Hex3TabooGUI:
                 self.canvas.itemconfig(item, fill=base_color)
         self._line_animation_items.clear()
         self._base_line_colors.clear()
-        self._line_animation_cycle = 0
+        self._line_animation_phase = 0.0
         self._line_highlight_job = None
+        self._line_highlight_color = self.HIGHLIGHT_COLORS["win"]
 
-    def _animate_line_highlight(
-        self, coords: List[AxialCoord], highlight_color: str = "#ffd166"
-    ) -> None:
+    def _highlight_color_for_outcome(self, outcome: str) -> str:
+        if outcome in self.HIGHLIGHT_COLORS:
+            return self.HIGHLIGHT_COLORS[outcome]
+        return self.HIGHLIGHT_COLORS["win"]
+
+    def _animate_line_highlight(self, coords: List[AxialCoord], highlight_color: str) -> None:
         self._stop_line_highlight()
         items = [self.coord_to_item[c] for c in coords if c in self.coord_to_item]
         if not items:
@@ -841,31 +855,28 @@ class Hex3TabooGUI:
             item: self._target_cell_colors.get(item, self.canvas.itemcget(item, "fill"))
             for item in items
         }
-        self._line_animation_cycle = 0
-        self._run_line_highlight_cycle(highlight_color)
+        self._line_highlight_color = highlight_color
+        self._line_animation_phase = 0.0
+        for item in items:
+            self.canvas.tag_raise(item)
+        self._run_line_highlight_cycle()
 
-    def _run_line_highlight_cycle(self, highlight_color: str) -> None:
+    def _run_line_highlight_cycle(self) -> None:
         if not self._line_animation_items:
             return
 
-        blink_on = self._line_animation_cycle % 2 == 0
+        intensity = 0.5 - 0.5 * math.cos(self._line_animation_phase)
         for item in self._line_animation_items:
-            color = highlight_color if blink_on else self._base_line_colors.get(item, highlight_color)
+            base = self._base_line_colors.get(item, self._line_highlight_color)
+            color = self._interpolate_color(base, self._line_highlight_color, intensity)
             self.canvas.itemconfig(item, fill=color)
 
-        self._line_animation_cycle += 1
-        if self._line_animation_cycle < 8:
-            self._line_highlight_job = self.root.after(
-                200, lambda: self._run_line_highlight_cycle(highlight_color)
-            )
-        else:
-            for item in self._line_animation_items:
-                base = self._base_line_colors.get(item)
-                if base:
-                    self.canvas.itemconfig(item, fill=base)
-            self._line_animation_items.clear()
-            self._base_line_colors.clear()
-            self._line_highlight_job = None
+        self._line_animation_phase = (
+            self._line_animation_phase + self.LINE_ANIMATION_STEP
+        ) % (2 * math.pi)
+        self._line_highlight_job = self.root.after(
+            self.LINE_ANIMATION_INTERVAL_MS, self._run_line_highlight_cycle
+        )
 
     def _show_reset_button(self) -> None:
         if not self._reset_button_visible:
