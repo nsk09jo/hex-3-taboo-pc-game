@@ -14,18 +14,20 @@ both a command-line and a lightweight Tkinter GUI front end.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
+import random
 import sys
 import time
-from typing import Callable, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 try:
     import tkinter as tk
-    from tkinter import messagebox
+    from tkinter import messagebox, ttk
 except Exception:  # pragma: no cover - Tk may be unavailable on some systems
     tk = None
     messagebox = None
+    ttk = None
 
 
 AxialCoord = Tuple[int, int]
@@ -137,6 +139,7 @@ class Hex3TabooGame:
         self.board.set(coord, self.current_player)
         self.history.append(Move(self.current_player, "place", coord))
         self.last_placed[self.current_player] = coord
+
         self.forbidden_placements[self.current_player] = None
 
     def can_remove(self) -> bool:
@@ -308,75 +311,1189 @@ def ease_out_quad(t: float) -> float:
     return 1 - (1 - t) * (1 - t)
 
 
+def ease_out_cubic(t: float) -> float:
+    return 1 - pow(1 - t, 3)
+
+
+def ease_in_out_quad(t: float) -> float:
+    return 2 * t * t if t < 0.5 else 1 - pow(-2 * t + 2, 2) / 2
+
+
+def ease_out_bounce(t: float) -> float:
+    n1 = 7.5625
+    d1 = 2.75
+    if t < 1 / d1:
+        return n1 * t * t
+    elif t < 2 / d1:
+        t -= 1.5 / d1
+        return n1 * t * t + 0.75
+    elif t < 2.5 / d1:
+        t -= 2.25 / d1
+        return n1 * t * t + 0.9375
+    else:
+        t -= 2.625 / d1
+        return n1 * t * t + 0.984375
+
+
+@dataclass
+class Theme:
+    """Color theme definition for the GUI."""
+    name: str
+    # Window
+    window_bg: str
+    # Board
+    board_bg_top: str
+    board_bg_bottom: str
+    board_border: str
+    # Cells
+    cell_base: str
+    cell_accent: str
+    cell_edge: str
+    # Players
+    player1_color: str
+    player1_outline: str
+    player1_glow: str
+    player2_color: str
+    player2_outline: str
+    player2_glow: str
+    # Other
+    disabled_stone: str
+    disabled_outline: str
+    empty_stone: str
+    hover_outline: str
+    shadow_color: str
+    coord_text: str
+    # UI Elements
+    text_primary: str
+    text_secondary: str
+    text_accent: str
+    panel_bg: str
+    panel_border: str
+    button_bg: str
+    button_fg: str
+    button_hover: str
+    button_active: str
+    button_border: str
+    highlight_color: str
+    success_color: str
+    warning_color: str
+    error_color: str
+
+
+THEMES: Dict[str, Theme] = {
+    "light": Theme(
+        name="ライト",
+        window_bg="#f0f4f8",
+        board_bg_top="#f3f7ff",
+        board_bg_bottom="#dce6f6",
+        board_border="#9fb0c9",
+        cell_base="#fefefe",
+        cell_accent="#e1e9f5",
+        cell_edge="#9da7b7",
+        player1_color="#e63946",
+        player1_outline="#7e1b26",
+        player1_glow="#ffcdd2",
+        player2_color="#457b9d",
+        player2_outline="#1d3557",
+        player2_glow="#bbdefb",
+        disabled_stone="#aab0bc",
+        disabled_outline="#5b626f",
+        empty_stone="#f5f5f5",
+        hover_outline="#ffb347",
+        shadow_color="#2a2e45",
+        coord_text="#6f7d95",
+        text_primary="#1d3557",
+        text_secondary="#457b9d",
+        text_accent="#e63946",
+        panel_bg="#ffffff",
+        panel_border="#e0e4e8",
+        button_bg="#457b9d",
+        button_fg="#ffffff",
+        button_hover="#1d3557",
+        button_active="#e63946",
+        button_border="#1d3557",
+        highlight_color="#ffd166",
+        success_color="#06d6a0",
+        warning_color="#ffd166",
+        error_color="#ef476f",
+    ),
+    "dark": Theme(
+        name="ダーク",
+        window_bg="#1a1d23",
+        board_bg_top="#252830",
+        board_bg_bottom="#1e2127",
+        board_border="#3d4250",
+        cell_base="#2d323c",
+        cell_accent="#363c4a",
+        cell_edge="#4a5260",
+        player1_color="#ff6b6b",
+        player1_outline="#c92a2a",
+        player1_glow="#ff8787",
+        player2_color="#4dabf7",
+        player2_outline="#1971c2",
+        player2_glow="#74c0fc",
+        disabled_stone="#495057",
+        disabled_outline="#343a40",
+        empty_stone="#343a40",
+        hover_outline="#fcc419",
+        shadow_color="#0d0e10",
+        coord_text="#868e96",
+        text_primary="#f8f9fa",
+        text_secondary="#adb5bd",
+        text_accent="#fcc419",
+        panel_bg="#252830",
+        panel_border="#3d4250",
+        button_bg="#4dabf7",
+        button_fg="#1a1d23",
+        button_hover="#74c0fc",
+        button_active="#ff6b6b",
+        button_border="#1971c2",
+        highlight_color="#fcc419",
+        success_color="#51cf66",
+        warning_color="#fcc419",
+        error_color="#ff6b6b",
+    ),
+    "ocean": Theme(
+        name="オーシャン",
+        window_bg="#0a192f",
+        board_bg_top="#112240",
+        board_bg_bottom="#0a192f",
+        board_border="#233554",
+        cell_base="#172a45",
+        cell_accent="#1f3a5f",
+        cell_edge="#233554",
+        player1_color="#f07178",
+        player1_outline="#c92a2a",
+        player1_glow="#ff8a80",
+        player2_color="#64ffda",
+        player2_outline="#00bfa5",
+        player2_glow="#a7ffeb",
+        disabled_stone="#495670",
+        disabled_outline="#3d5175",
+        empty_stone="#233554",
+        hover_outline="#ffd54f",
+        shadow_color="#020c1b",
+        coord_text="#8892b0",
+        text_primary="#ccd6f6",
+        text_secondary="#8892b0",
+        text_accent="#64ffda",
+        panel_bg="#112240",
+        panel_border="#233554",
+        button_bg="#64ffda",
+        button_fg="#0a192f",
+        button_hover="#a7ffeb",
+        button_active="#f07178",
+        button_border="#00bfa5",
+        highlight_color="#ffd54f",
+        success_color="#64ffda",
+        warning_color="#ffd54f",
+        error_color="#f07178",
+    ),
+}
+
+
+@dataclass
+class GameStats:
+    """Statistics tracking for games played."""
+    player1_wins: int = 0
+    player2_wins: int = 0
+    draws: int = 0
+    total_games: int = 0
+    current_streak: int = 0
+    streak_player: int = 0
+
+    def record_result(self, outcome: str, player: int) -> None:
+        self.total_games += 1
+        if outcome == "win":
+            if player == 1:
+                self.player1_wins += 1
+            else:
+                self.player2_wins += 1
+            if self.streak_player == player:
+                self.current_streak += 1
+            else:
+                self.streak_player = player
+                self.current_streak = 1
+        elif outcome == "loss":
+            # Loss means the other player wins
+            other = 2 if player == 1 else 1
+            if other == 1:
+                self.player1_wins += 1
+            else:
+                self.player2_wins += 1
+            if self.streak_player == other:
+                self.current_streak += 1
+            else:
+                self.streak_player = other
+                self.current_streak = 1
+        else:
+            self.draws += 1
+            self.current_streak = 0
+            self.streak_player = 0
+
+
+@dataclass
+class Particle:
+    """Particle for celebration effects."""
+    x: float
+    y: float
+    vx: float
+    vy: float
+    color: str
+    size: float
+    life: float
+    max_life: float
+    shape: str = "circle"  # circle, star, hexagon
+
+
+class ParticleSystem:
+    """Manages particle effects for celebrations."""
+
+    def __init__(self, canvas: "tk.Canvas") -> None:
+        self.canvas = canvas
+        self.particles: List[Particle] = []
+        self._particle_items: Dict[int, int] = {}  # particle index -> canvas item
+        self._running = False
+        self._gravity = 0.15
+        self._friction = 0.99
+
+    def emit_burst(
+        self,
+        x: float,
+        y: float,
+        count: int = 50,
+        colors: Optional[List[str]] = None,
+        spread: float = 8.0,
+    ) -> None:
+        if colors is None:
+            colors = ["#ffd700", "#ff6b6b", "#4dabf7", "#51cf66", "#cc5de8"]
+
+        for _ in range(count):
+            angle = random.uniform(0, 2 * math.pi)
+            speed = random.uniform(2, spread)
+            particle = Particle(
+                x=x,
+                y=y,
+                vx=math.cos(angle) * speed,
+                vy=math.sin(angle) * speed - random.uniform(2, 5),
+                color=random.choice(colors),
+                size=random.uniform(3, 8),
+                life=1.0,
+                max_life=1.0,
+                shape=random.choice(["circle", "star"]),
+            )
+            self.particles.append(particle)
+
+        if not self._running:
+            self._running = True
+            self._animate()
+
+    def emit_confetti(
+        self,
+        width: int,
+        height: int,
+        count: int = 100,
+        colors: Optional[List[str]] = None,
+    ) -> None:
+        if colors is None:
+            colors = ["#ffd700", "#ff6b6b", "#4dabf7", "#51cf66", "#cc5de8", "#fcc419"]
+
+        for _ in range(count):
+            particle = Particle(
+                x=random.uniform(0, width),
+                y=random.uniform(-50, -10),
+                vx=random.uniform(-1, 1),
+                vy=random.uniform(1, 3),
+                color=random.choice(colors),
+                size=random.uniform(4, 10),
+                life=1.0,
+                max_life=1.0,
+                shape=random.choice(["circle", "star", "hexagon"]),
+            )
+            self.particles.append(particle)
+
+        if not self._running:
+            self._running = True
+            self._animate()
+
+    def clear(self) -> None:
+        self._running = False
+        for item_id in self._particle_items.values():
+            self.canvas.delete(item_id)
+        self._particle_items.clear()
+        self.particles.clear()
+
+    def _animate(self) -> None:
+        if not self._running or not self.particles:
+            self._running = False
+            return
+
+        # Update and draw particles
+        alive_particles: List[Particle] = []
+        new_items: Dict[int, int] = {}
+
+        for i, p in enumerate(self.particles):
+            # Update physics
+            p.vy += self._gravity
+            p.vx *= self._friction
+            p.x += p.vx
+            p.y += p.vy
+            p.life -= 0.02
+
+            if p.life > 0:
+                alive_particles.append(p)
+                alpha = max(0, min(1, p.life))
+                size = p.size * alpha
+
+                # Get or create canvas item
+                old_item = self._particle_items.get(i)
+                if old_item:
+                    self.canvas.delete(old_item)
+
+                if size > 0.5:
+                    item = self._draw_particle(p, size, alpha)
+                    new_items[len(alive_particles) - 1] = item
+            else:
+                old_item = self._particle_items.get(i)
+                if old_item:
+                    self.canvas.delete(old_item)
+
+        self._particle_items = new_items
+        self.particles = alive_particles
+
+        if self.particles:
+            self.canvas.after(16, self._animate)
+        else:
+            self._running = False
+
+    def _draw_particle(self, p: Particle, size: float, alpha: float) -> int:
+        if p.shape == "star":
+            return self._draw_star(p.x, p.y, size, p.color)
+        elif p.shape == "hexagon":
+            return self._draw_hexagon(p.x, p.y, size, p.color)
+        else:
+            return self.canvas.create_oval(
+                p.x - size, p.y - size, p.x + size, p.y + size,
+                fill=p.color, outline=""
+            )
+
+    def _draw_star(self, x: float, y: float, size: float, color: str) -> int:
+        points = []
+        for i in range(10):
+            angle = math.pi / 2 + i * math.pi / 5
+            r = size if i % 2 == 0 else size * 0.4
+            points.extend([x + r * math.cos(angle), y - r * math.sin(angle)])
+        return self.canvas.create_polygon(points, fill=color, outline="")
+
+    def _draw_hexagon(self, x: float, y: float, size: float, color: str) -> int:
+        points = []
+        for i in range(6):
+            angle = math.radians(60 * i - 30)
+            points.extend([x + size * math.cos(angle), y + size * math.sin(angle)])
+        return self.canvas.create_polygon(points, fill=color, outline="")
+
+
+class Tooltip:
+    """Tooltip widget for hover information."""
+
+    def __init__(self, widget: "tk.Widget", text: str, theme: Theme) -> None:
+        self.widget = widget
+        self.text = text
+        self.theme = theme
+        self.tooltip_window: Optional["tk.Toplevel"] = None
+        self._after_id: Optional[str] = None
+
+        widget.bind("<Enter>", self._schedule_show)
+        widget.bind("<Leave>", self._hide)
+        widget.bind("<Button>", self._hide)
+
+    def update_text(self, text: str) -> None:
+        self.text = text
+        if self.tooltip_window:
+            for child in self.tooltip_window.winfo_children():
+                if isinstance(child, tk.Label):
+                    child.config(text=text)
+
+    def _schedule_show(self, event: "tk.Event") -> None:
+        self._after_id = self.widget.after(500, self._show)
+
+    def _show(self) -> None:
+        if self.tooltip_window:
+            return
+
+        x = self.widget.winfo_rootx() + self.widget.winfo_width() // 2
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+
+        self.tooltip_window = tk.Toplevel(self.widget)
+        self.tooltip_window.wm_overrideredirect(True)
+        self.tooltip_window.wm_geometry(f"+{x}+{y}")
+
+        frame = tk.Frame(
+            self.tooltip_window,
+            bg=self.theme.panel_bg,
+            relief="solid",
+            borderwidth=1,
+        )
+        frame.pack()
+
+        label = tk.Label(
+            frame,
+            text=self.text,
+            bg=self.theme.panel_bg,
+            fg=self.theme.text_primary,
+            font=("Helvetica", 10),
+            padx=8,
+            pady=4,
+        )
+        label.pack()
+
+    def _hide(self, event: Optional["tk.Event"] = None) -> None:
+        if self._after_id:
+            self.widget.after_cancel(self._after_id)
+            self._after_id = None
+        if self.tooltip_window:
+            self.tooltip_window.destroy()
+            self.tooltip_window = None
+
+
+# GUI widget classes that inherit from Tkinter require tk to be available
+_TkCanvasBase = tk.Canvas if tk is not None else object
+_TkFrameBase = tk.Frame if tk is not None else object
+_TkToplevelBase = tk.Toplevel if tk is not None else object
+
+
+class StyledButton(_TkCanvasBase):  # type: ignore[misc]
+    """Custom styled button with hover effects and rounded corners."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        text: str,
+        theme: Theme,
+        command: Optional[Callable[[], None]] = None,
+        width: int = 160,
+        height: int = 40,
+        icon: Optional[str] = None,
+        style: str = "primary",  # primary, secondary, danger
+    ) -> None:
+        super().__init__(
+            parent,
+            width=width,
+            height=height,
+            bg=theme.panel_bg,
+            highlightthickness=0,
+        )
+        self.theme = theme
+        self.text = text
+        self.command = command
+        self._width = width
+        self._height = height
+        self.icon = icon
+        self.style = style
+        self._state = "normal"
+        self._hovered = False
+
+        self._colors = self._get_style_colors()
+        self._draw()
+
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+        self.bind("<Button-1>", self._on_click)
+        self.bind("<ButtonRelease-1>", self._on_release)
+
+    def _get_style_colors(self) -> Dict[str, str]:
+        if self.style == "danger":
+            return {
+                "bg": self.theme.error_color,
+                "fg": "#ffffff",
+                "hover": self.theme.warning_color,
+                "border": self.theme.error_color,
+            }
+        elif self.style == "secondary":
+            return {
+                "bg": self.theme.panel_bg,
+                "fg": self.theme.text_primary,
+                "hover": self.theme.cell_accent,
+                "border": self.theme.panel_border,
+            }
+        else:  # primary
+            return {
+                "bg": self.theme.button_bg,
+                "fg": self.theme.button_fg,
+                "hover": self.theme.button_hover,
+                "border": self.theme.button_border,
+            }
+
+    def _draw(self) -> None:
+        self.delete("all")
+
+        radius = 8
+        color = self._colors["hover"] if self._hovered else self._colors["bg"]
+        if self._state == "disabled":
+            color = self.theme.disabled_stone
+
+        # Draw rounded rectangle
+        self._draw_rounded_rect(2, 2, self._width - 2, self._height - 2, radius, color)
+
+        # Draw border
+        self._draw_rounded_rect_outline(
+            2, 2, self._width - 2, self._height - 2, radius,
+            self._colors["border"] if self._state != "disabled" else self.theme.disabled_outline
+        )
+
+        # Draw text
+        text_color = self._colors["fg"] if self._state != "disabled" else self.theme.coord_text
+        display_text = self.icon + " " + self.text if self.icon else self.text
+        self.create_text(
+            self._width // 2,
+            self._height // 2,
+            text=display_text,
+            fill=text_color,
+            font=("Helvetica", 11, "bold"),
+        )
+
+    def _draw_rounded_rect(
+        self, x1: float, y1: float, x2: float, y2: float, radius: float, color: str
+    ) -> None:
+        points = [
+            x1 + radius, y1,
+            x2 - radius, y1,
+            x2, y1,
+            x2, y1 + radius,
+            x2, y2 - radius,
+            x2, y2,
+            x2 - radius, y2,
+            x1 + radius, y2,
+            x1, y2,
+            x1, y2 - radius,
+            x1, y1 + radius,
+            x1, y1,
+            x1 + radius, y1,
+        ]
+        self.create_polygon(points, fill=color, outline="", smooth=True)
+
+    def _draw_rounded_rect_outline(
+        self, x1: float, y1: float, x2: float, y2: float, radius: float, color: str
+    ) -> None:
+        # Top
+        self.create_line(x1 + radius, y1, x2 - radius, y1, fill=color, width=2)
+        # Right
+        self.create_line(x2, y1 + radius, x2, y2 - radius, fill=color, width=2)
+        # Bottom
+        self.create_line(x2 - radius, y2, x1 + radius, y2, fill=color, width=2)
+        # Left
+        self.create_line(x1, y2 - radius, x1, y1 + radius, fill=color, width=2)
+        # Corners (arcs)
+        self.create_arc(x1, y1, x1 + 2*radius, y1 + 2*radius, start=90, extent=90, style="arc", outline=color, width=2)
+        self.create_arc(x2 - 2*radius, y1, x2, y1 + 2*radius, start=0, extent=90, style="arc", outline=color, width=2)
+        self.create_arc(x2 - 2*radius, y2 - 2*radius, x2, y2, start=270, extent=90, style="arc", outline=color, width=2)
+        self.create_arc(x1, y2 - 2*radius, x1 + 2*radius, y2, start=180, extent=90, style="arc", outline=color, width=2)
+
+    def _on_enter(self, event: tk.Event) -> None:
+        if self._state != "disabled":
+            self._hovered = True
+            self._draw()
+            self.config(cursor="hand2")
+
+    def _on_leave(self, event: tk.Event) -> None:
+        self._hovered = False
+        self._draw()
+        self.config(cursor="")
+
+    def _on_click(self, event: tk.Event) -> None:
+        if self._state != "disabled" and self.command:
+            self._colors["bg"], self._colors["hover"] = self._colors["hover"], self._colors["bg"]
+            self._draw()
+
+    def _on_release(self, event: tk.Event) -> None:
+        if self._state != "disabled":
+            self._colors["bg"], self._colors["hover"] = self._colors["hover"], self._colors["bg"]
+            self._draw()
+            if self.command:
+                self.command()
+
+    def set_state(self, state: str) -> None:
+        self._state = state
+        self._draw()
+
+    def update_theme(self, theme: Theme) -> None:
+        self.theme = theme
+        self._colors = self._get_style_colors()
+        self.config(bg=theme.panel_bg)
+        self._draw()
+
+
+class PlayerPanel(_TkFrameBase):  # type: ignore[misc]
+    """Panel showing player information and turn status."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        player: int,
+        theme: Theme,
+        player_name: str = "",
+    ) -> None:
+        super().__init__(parent, bg=theme.panel_bg, padx=15, pady=15)
+        self.player = player
+        self.theme = theme
+        self.player_name = player_name or f"プレイヤー {player}"
+        self._is_active = False
+        self._stone_count = 0
+        self._can_neutralize = False
+
+        self._create_widgets()
+
+    def _create_widgets(self) -> None:
+        # Player indicator (colored circle)
+        self.indicator_canvas = tk.Canvas(
+            self, width=50, height=50, bg=self.theme.panel_bg, highlightthickness=0
+        )
+        self.indicator_canvas.pack(pady=(0, 10))
+        self._draw_indicator()
+
+        # Player name
+        self.name_label = tk.Label(
+            self,
+            text=self.player_name,
+            font=("Helvetica", 14, "bold"),
+            bg=self.theme.panel_bg,
+            fg=self.theme.text_primary,
+        )
+        self.name_label.pack()
+
+        # Symbol
+        symbol = "X" if self.player == 1 else "O"
+        self.symbol_label = tk.Label(
+            self,
+            text=f"（{symbol}）",
+            font=("Helvetica", 12),
+            bg=self.theme.panel_bg,
+            fg=self.theme.text_secondary,
+        )
+        self.symbol_label.pack()
+
+        # Stone count
+        self.count_label = tk.Label(
+            self,
+            text="石: 0",
+            font=("Helvetica", 11),
+            bg=self.theme.panel_bg,
+            fg=self.theme.text_secondary,
+        )
+        self.count_label.pack(pady=(10, 0))
+
+        # Turn indicator
+        self.turn_frame = tk.Frame(self, bg=self.theme.panel_bg)
+        self.turn_frame.pack(pady=(10, 0))
+
+        self.turn_label = tk.Label(
+            self.turn_frame,
+            text="",
+            font=("Helvetica", 10, "bold"),
+            bg=self.theme.panel_bg,
+            fg=self.theme.success_color,
+        )
+        self.turn_label.pack()
+
+        # Neutralize indicator (for player 2)
+        if self.player == 2:
+            self.neutralize_label = tk.Label(
+                self,
+                text="",
+                font=("Helvetica", 9),
+                bg=self.theme.panel_bg,
+                fg=self.theme.text_accent,
+            )
+            self.neutralize_label.pack(pady=(5, 0))
+
+    def _draw_indicator(self) -> None:
+        self.indicator_canvas.delete("all")
+        cx, cy = 25, 25
+        radius = 20
+
+        # Get player color
+        if self.player == 1:
+            color = self.theme.player1_color
+            outline = self.theme.player1_outline
+            glow = self.theme.player1_glow
+        else:
+            color = self.theme.player2_color
+            outline = self.theme.player2_outline
+            glow = self.theme.player2_glow
+
+        # Draw glow if active
+        if self._is_active:
+            for i in range(3):
+                glow_radius = radius + 8 - i * 2
+                alpha_hex = hex(int(80 - i * 20))[2:].zfill(2)
+                self.indicator_canvas.create_oval(
+                    cx - glow_radius, cy - glow_radius,
+                    cx + glow_radius, cy + glow_radius,
+                    fill=glow, outline=""
+                )
+
+        # Draw stone
+        self.indicator_canvas.create_oval(
+            cx - radius, cy - radius,
+            cx + radius, cy + radius,
+            fill=color, outline=outline, width=3
+        )
+
+        # Draw symbol
+        symbol = "X" if self.player == 1 else "O"
+        self.indicator_canvas.create_text(
+            cx, cy, text=symbol,
+            fill="#ffffff", font=("Helvetica", 14, "bold")
+        )
+
+    def set_active(self, active: bool) -> None:
+        self._is_active = active
+        self._draw_indicator()
+        if active:
+            self.turn_label.config(text="▶ あなたの番です")
+            self.config(relief="solid", borderwidth=2)
+        else:
+            self.turn_label.config(text="")
+            self.config(relief="flat", borderwidth=0)
+
+    def set_stone_count(self, count: int) -> None:
+        self._stone_count = count
+        self.count_label.config(text=f"石: {count}")
+
+    def set_can_neutralize(self, can_neutralize: bool, used: bool = False) -> None:
+        self._can_neutralize = can_neutralize
+        if self.player == 2:
+            if used:
+                self.neutralize_label.config(text="⚡ 無効化：使用済み", fg=self.theme.text_secondary)
+            elif can_neutralize:
+                self.neutralize_label.config(text="⚡ 無効化：使用可能", fg=self.theme.text_accent)
+            else:
+                self.neutralize_label.config(text="⚡ 無効化：待機中", fg=self.theme.text_secondary)
+
+    def update_theme(self, theme: Theme) -> None:
+        self.theme = theme
+        self.config(bg=theme.panel_bg)
+        self.indicator_canvas.config(bg=theme.panel_bg)
+        self.name_label.config(bg=theme.panel_bg, fg=theme.text_primary)
+        self.symbol_label.config(bg=theme.panel_bg, fg=theme.text_secondary)
+        self.count_label.config(bg=theme.panel_bg, fg=theme.text_secondary)
+        self.turn_frame.config(bg=theme.panel_bg)
+        self.turn_label.config(bg=theme.panel_bg, fg=theme.success_color)
+        if self.player == 2:
+            self.neutralize_label.config(bg=theme.panel_bg)
+        self._draw_indicator()
+
+
+class SettingsDialog(_TkToplevelBase):  # type: ignore[misc]
+    """Settings dialog for game configuration."""
+
+    def __init__(self, parent: tk.Widget, current_theme: str, current_radius: int, on_apply: Callable) -> None:
+        super().__init__(parent)
+        self.title("設定")
+        self.geometry("400x350")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+
+        self.current_theme = current_theme
+        self.current_radius = current_radius
+        self.on_apply = on_apply
+
+        theme = THEMES[current_theme]
+        self.config(bg=theme.window_bg)
+
+        self._create_widgets(theme)
+
+        # Center the dialog
+        self.update_idletasks()
+        x = parent.winfo_rootx() + (parent.winfo_width() - self.winfo_width()) // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - self.winfo_height()) // 2
+        self.geometry(f"+{x}+{y}")
+
+    def _create_widgets(self, theme: Theme) -> None:
+        # Title
+        title_label = tk.Label(
+            self, text="ゲーム設定", font=("Helvetica", 18, "bold"),
+            bg=theme.window_bg, fg=theme.text_primary
+        )
+        title_label.pack(pady=(20, 20))
+
+        # Settings frame
+        settings_frame = tk.Frame(self, bg=theme.window_bg)
+        settings_frame.pack(padx=30, fill="x")
+
+        # Theme selection
+        theme_label = tk.Label(
+            settings_frame, text="テーマ:", font=("Helvetica", 12),
+            bg=theme.window_bg, fg=theme.text_primary
+        )
+        theme_label.grid(row=0, column=0, sticky="w", pady=10)
+
+        self.theme_var = tk.StringVar(value=self.current_theme)
+        theme_options = [(t.name, k) for k, t in THEMES.items()]
+
+        theme_frame = tk.Frame(settings_frame, bg=theme.window_bg)
+        theme_frame.grid(row=0, column=1, sticky="w", padx=(20, 0))
+
+        for i, (display_name, key) in enumerate(theme_options):
+            rb = tk.Radiobutton(
+                theme_frame, text=display_name, variable=self.theme_var, value=key,
+                bg=theme.window_bg, fg=theme.text_primary,
+                selectcolor=theme.panel_bg, activebackground=theme.window_bg,
+                activeforeground=theme.text_primary
+            )
+            rb.pack(anchor="w")
+
+        # Board radius selection
+        radius_label = tk.Label(
+            settings_frame, text="盤の半径:", font=("Helvetica", 12),
+            bg=theme.window_bg, fg=theme.text_primary
+        )
+        radius_label.grid(row=1, column=0, sticky="w", pady=10)
+
+        radius_frame = tk.Frame(settings_frame, bg=theme.window_bg)
+        radius_frame.grid(row=1, column=1, sticky="w", padx=(20, 0))
+
+        self.radius_var = tk.IntVar(value=self.current_radius)
+        for r in [3, 4, 5, 6]:
+            rb = tk.Radiobutton(
+                radius_frame, text=str(r), variable=self.radius_var, value=r,
+                bg=theme.window_bg, fg=theme.text_primary,
+                selectcolor=theme.panel_bg, activebackground=theme.window_bg,
+                activeforeground=theme.text_primary
+            )
+            rb.pack(side="left", padx=5)
+
+        # Info text
+        info_label = tk.Label(
+            self, text="※ 盤の半径を変更すると新しいゲームが開始されます",
+            font=("Helvetica", 9), bg=theme.window_bg, fg=theme.text_secondary
+        )
+        info_label.pack(pady=(20, 10))
+
+        # Buttons
+        button_frame = tk.Frame(self, bg=theme.window_bg)
+        button_frame.pack(pady=20)
+
+        apply_btn = tk.Button(
+            button_frame, text="適用", command=self._apply,
+            bg=theme.button_bg, fg=theme.button_fg,
+            font=("Helvetica", 11), width=10, relief="flat"
+        )
+        apply_btn.pack(side="left", padx=10)
+
+        cancel_btn = tk.Button(
+            button_frame, text="キャンセル", command=self.destroy,
+            bg=theme.panel_bg, fg=theme.text_primary,
+            font=("Helvetica", 11), width=10, relief="flat"
+        )
+        cancel_btn.pack(side="left", padx=10)
+
+    def _apply(self) -> None:
+        new_theme = self.theme_var.get()
+        new_radius = self.radius_var.get()
+        self.on_apply(new_theme, new_radius)
+        self.destroy()
+
+
+class RulesDialog(_TkToplevelBase):  # type: ignore[misc]
+    """Dialog showing game rules."""
+
+    def __init__(self, parent: tk.Widget, theme: Theme) -> None:
+        super().__init__(parent)
+        self.title("ゲームルール")
+        self.geometry("500x500")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+
+        self.config(bg=theme.window_bg)
+        self._create_widgets(theme)
+
+        # Center the dialog
+        self.update_idletasks()
+        x = parent.winfo_rootx() + (parent.winfo_width() - self.winfo_width()) // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - self.winfo_height()) // 2
+        self.geometry(f"+{x}+{y}")
+
+    def _create_widgets(self, theme: Theme) -> None:
+        # Title
+        title_label = tk.Label(
+            self, text="ヘックス3-タブー ルール", font=("Helvetica", 18, "bold"),
+            bg=theme.window_bg, fg=theme.text_primary
+        )
+        title_label.pack(pady=(20, 15))
+
+        # Rules text
+        rules_frame = tk.Frame(self, bg=theme.panel_bg, padx=20, pady=20)
+        rules_frame.pack(padx=20, fill="both", expand=True)
+
+        rules_text = """
+【基本ルール】
+
+1. 二人のプレイヤーが交互に六角形のマスに石を置きます。
+
+2. プレイヤー1は赤（X）、プレイヤー2は青（O）の石を使います。
+
+【勝利条件】
+• 4つ以上の石を一直線に並べると勝利！
+
+【敗北条件】
+• 両端がブロックされた状態で3つの石が一直線に
+  並んでしまうと敗北（タブー）
+
+【特殊アクション】
+• プレイヤー2は、ゲーム中1回だけ、相手が最後に
+  置いた石を「無効化」することができます。
+• 無効化された石はどちらのプレイヤーのものでも
+  なくなります。
+
+【戦略のヒント】
+• 4連を目指しながら、うっかり3タブーを作らない
+  ように注意！
+• 相手を3タブーに追い込む戦略も有効です。
+• プレイヤー2の無効化は貴重な切り札です。
+  使うタイミングを慎重に選びましょう。
+        """
+
+        text_label = tk.Label(
+            rules_frame, text=rules_text.strip(),
+            font=("Helvetica", 11), bg=theme.panel_bg, fg=theme.text_primary,
+            justify="left", anchor="nw"
+        )
+        text_label.pack(fill="both", expand=True)
+
+        # Close button
+        close_btn = tk.Button(
+            self, text="閉じる", command=self.destroy,
+            bg=theme.button_bg, fg=theme.button_fg,
+            font=("Helvetica", 11), width=10, relief="flat"
+        )
+        close_btn.pack(pady=15)
+
+
+class StartScreen(_TkFrameBase):  # type: ignore[misc]
+    """Animated start screen."""
+
+    def __init__(self, parent: tk.Widget, theme: Theme, on_start: Callable, on_settings: Callable, on_rules: Callable) -> None:
+        super().__init__(parent, bg=theme.window_bg)
+        self.theme = theme
+        self.on_start = on_start
+        self.on_settings = on_settings
+        self.on_rules = on_rules
+        self._animation_id: Optional[str] = None
+        self._particles: List[Dict] = []
+
+        self._create_widgets()
+        self._start_animation()
+
+    def _create_widgets(self) -> None:
+        # Background canvas for particles
+        self.bg_canvas = tk.Canvas(
+            self, bg=self.theme.window_bg, highlightthickness=0
+        )
+        self.bg_canvas.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+        # Content frame
+        content = tk.Frame(self, bg=self.theme.window_bg)
+        content.place(relx=0.5, rely=0.5, anchor="center")
+
+        # Title with shadow effect
+        title_frame = tk.Frame(content, bg=self.theme.window_bg)
+        title_frame.pack(pady=(0, 10))
+
+        # Shadow title
+        self.shadow_label = tk.Label(
+            title_frame,
+            text="ヘックス3-タブー",
+            font=("Helvetica", 42, "bold"),
+            bg=self.theme.window_bg,
+            fg=self.theme.shadow_color,
+        )
+        self.shadow_label.place(x=3, y=3)
+
+        # Main title
+        self.title_label = tk.Label(
+            title_frame,
+            text="ヘックス3-タブー",
+            font=("Helvetica", 42, "bold"),
+            bg=self.theme.window_bg,
+            fg=self.theme.text_primary,
+        )
+        self.title_label.pack()
+
+        # Subtitle
+        subtitle = tk.Label(
+            content,
+            text="〜 戦略的六角形ボードゲーム 〜",
+            font=("Helvetica", 14),
+            bg=self.theme.window_bg,
+            fg=self.theme.text_secondary,
+        )
+        subtitle.pack(pady=(0, 40))
+
+        # Hexagon decoration
+        self.hex_canvas = tk.Canvas(
+            content, width=120, height=120, bg=self.theme.window_bg, highlightthickness=0
+        )
+        self.hex_canvas.pack(pady=(0, 40))
+        self._draw_hex_logo()
+
+        # Buttons
+        button_frame = tk.Frame(content, bg=self.theme.window_bg)
+        button_frame.pack()
+
+        self.start_button = StyledButton(
+            button_frame, "ゲーム開始", self.theme,
+            command=self.on_start, width=200, height=50, icon="▶"
+        )
+        self.start_button.pack(pady=8)
+
+        self.rules_button = StyledButton(
+            button_frame, "ルール説明", self.theme,
+            command=self.on_rules, width=200, height=45, style="secondary", icon="📖"
+        )
+        self.rules_button.pack(pady=8)
+
+        self.settings_button = StyledButton(
+            button_frame, "設定", self.theme,
+            command=self.on_settings, width=200, height=45, style="secondary", icon="⚙"
+        )
+        self.settings_button.pack(pady=8)
+
+        # Version
+        version_label = tk.Label(
+            content, text="v2.0",
+            font=("Helvetica", 10), bg=self.theme.window_bg, fg=self.theme.text_secondary
+        )
+        version_label.pack(pady=(30, 0))
+
+    def _draw_hex_logo(self) -> None:
+        cx, cy = 60, 60
+        size = 45
+
+        # Draw outer hexagon
+        points = []
+        for i in range(6):
+            angle = math.radians(60 * i - 30)
+            points.extend([cx + size * math.cos(angle), cy + size * math.sin(angle)])
+        self.hex_canvas.create_polygon(
+            points, fill=self.theme.cell_base, outline=self.theme.cell_edge, width=3
+        )
+
+        # Draw inner decorations
+        inner_size = 25
+        inner_points = []
+        for i in range(6):
+            angle = math.radians(60 * i - 30)
+            inner_points.extend([cx + inner_size * math.cos(angle), cy + inner_size * math.sin(angle)])
+        self.hex_canvas.create_polygon(
+            inner_points, fill="", outline=self.theme.text_secondary, width=2
+        )
+
+        # Draw center stones
+        stone_positions = [(-12, -8), (12, -8), (0, 12)]
+        colors = [self.theme.player1_color, self.theme.player2_color, self.theme.text_accent]
+        for (dx, dy), color in zip(stone_positions, colors):
+            self.hex_canvas.create_oval(
+                cx + dx - 8, cy + dy - 8, cx + dx + 8, cy + dy + 8,
+                fill=color, outline=""
+            )
+
+    def _start_animation(self) -> None:
+        # Initialize floating particles
+        self._particles = []
+        for _ in range(15):
+            self._particles.append({
+                "x": random.uniform(0, 800),
+                "y": random.uniform(0, 600),
+                "vx": random.uniform(-0.5, 0.5),
+                "vy": random.uniform(-0.5, 0.5),
+                "size": random.uniform(20, 50),
+                "color": random.choice([
+                    self.theme.player1_color, self.theme.player2_color,
+                    self.theme.text_accent, self.theme.cell_accent
+                ]),
+                "alpha": random.uniform(0.1, 0.3),
+            })
+        self._animate_particles()
+
+    def _animate_particles(self) -> None:
+        self.bg_canvas.delete("particle")
+        width = self.winfo_width() or 800
+        height = self.winfo_height() or 600
+
+        for p in self._particles:
+            p["x"] += p["vx"]
+            p["y"] += p["vy"]
+
+            # Wrap around
+            if p["x"] < -50:
+                p["x"] = width + 50
+            elif p["x"] > width + 50:
+                p["x"] = -50
+            if p["y"] < -50:
+                p["y"] = height + 50
+            elif p["y"] > height + 50:
+                p["y"] = -50
+
+            # Draw hexagon particle
+            points = []
+            for i in range(6):
+                angle = math.radians(60 * i - 30)
+                points.extend([
+                    p["x"] + p["size"] * math.cos(angle),
+                    p["y"] + p["size"] * math.sin(angle)
+                ])
+            self.bg_canvas.create_polygon(
+                points, fill="", outline=p["color"], width=1,
+                stipple="gray25", tags="particle"
+            )
+
+        self._animation_id = self.after(50, self._animate_particles)
+
+    def stop_animation(self) -> None:
+        if self._animation_id:
+            self.after_cancel(self._animation_id)
+            self._animation_id = None
+
+    def update_theme(self, theme: Theme) -> None:
+        self.theme = theme
+        self.config(bg=theme.window_bg)
+        self.bg_canvas.config(bg=theme.window_bg)
+        self.title_label.config(bg=theme.window_bg, fg=theme.text_primary)
+        self.shadow_label.config(bg=theme.window_bg, fg=theme.shadow_color)
+        self.hex_canvas.config(bg=theme.window_bg)
+        self._draw_hex_logo()
+        self.start_button.update_theme(theme)
+        self.rules_button.update_theme(theme)
+        self.settings_button.update_theme(theme)
+
+
 class Hex3TabooGUI:
-    """Simple Tkinter-based interface for playing Hex 3-Taboo."""
+    """Production-level Tkinter interface for playing Hex 3-Taboo."""
 
     DEFAULT_HEX_SIZE = 30
-    BOARD_BACKGROUND_TOP = "#f3f7ff"
-    BOARD_BACKGROUND_BOTTOM = "#dce6f6"
-    CELL_BASE_COLOR = "#fefefe"
-    CELL_ACCENT_COLOR = "#e1e9f5"
-    CELL_EDGE_COLOR = "#9da7b7"
-    PLAYER_COLORS = {1: "#d64550", 2: "#4072b0"}
-    PLAYER_OUTLINES = {1: "#7e1b26", 2: "#123b66"}
-    DISABLED_STONE_COLOR = "#aab0bc"
-    DISABLED_OUTLINE_COLOR = "#5b626f"
-    EMPTY_STONE_COLOR = "#f5f5f5"
-    OUTLINE_COLOR = "#4a4a4a"
-    HOVER_OUTLINE_COLOR = "#ffb347"
-    HOVER_FILL_BLEND = 0.18
-    SHADOW_COLOR = "#2a2e45"
     SHADOW_OFFSET = (3, 4)
-    COORD_TEXT_COLOR = "#6f7d95"
 
-    def __init__(self, game: Hex3TabooGame) -> None:
+    def __init__(self, game: Hex3TabooGame, theme_name: str = "light") -> None:
         if tk is None:
             raise RuntimeError("Tkinter is not available in this environment.")
 
         self.game = game
         self.board_radius = game.board.radius
+        self.theme_name = theme_name
+        self.theme = THEMES[theme_name]
+        self.stats = GameStats()
+
+        # Setup main window
         self.root = tk.Tk()
         self.root.title("ヘックス3-タブー")
+        self.root.geometry("1100x750")
+        self.root.minsize(900, 650)
+        self.root.config(bg=self.theme.window_bg)
 
-        self.status_var = tk.StringVar()
-        self.status_label = tk.Label(
-            self.root, textvariable=self.status_var, font=("Helvetica", 12)
-        )
-        self.status_label.pack(pady=(6, 0))
-
-        self.outcome_var = tk.StringVar(value="")
-        self.outcome_label = tk.Label(
-            self.root,
-            textvariable=self.outcome_var,
-            font=("Helvetica", 14, "bold"),
-            fg="#1f2d3d",
-            wraplength=480,
-            justify=tk.CENTER,
-        )
-        self.outcome_label.pack(pady=(2, 8))
-
-        self.canvas = tk.Canvas(self.root, background="white", highlightthickness=0)
-        self.canvas.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
-        self.canvas.bind("<Configure>", self.on_canvas_configure)
-
-        controls = tk.Frame(self.root)
-        controls.pack(pady=4)
-
-        self.remove_button = tk.Button(
-            controls,
-            text="相手の最後の石を無効化",
-            command=self.on_remove,
-            state=tk.DISABLED,
-        )
-        self.remove_button.pack()
-
-        self.reset_button = tk.Button(
-            controls,
-            text="ゲームをリセット",
-            command=self.reset_game,
-        )
-        self._reset_button_visible = False
-
+        # Initialize state variables
         self.hex_size: float = self.DEFAULT_HEX_SIZE
         self.cell_items: Dict[int, AxialCoord] = {}
         self.coord_to_item: Dict[AxialCoord, int] = {}
@@ -394,9 +1511,313 @@ class Hex3TabooGUI:
         self._base_line_colors: Dict[int, str] = {}
         self._line_highlight_tween: Optional[Tween] = None
         self._hovered_item: Optional[int] = None
+        self._game_started = False
+        self._game_over = False
+
+        # Create UI
+        self._create_menu()
+        self._create_start_screen()
+
+    def _create_menu(self) -> None:
+        self.menubar = tk.Menu(self.root)
+        self.root.config(menu=self.menubar)
+
+        # Game menu
+        game_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="ゲーム", menu=game_menu)
+        game_menu.add_command(label="新規ゲーム", command=self._new_game, accelerator="Ctrl+N")
+        game_menu.add_command(label="タイトルに戻る", command=self._return_to_title)
+        game_menu.add_separator()
+        game_menu.add_command(label="終了", command=self.root.quit, accelerator="Ctrl+Q")
+
+        # Settings menu
+        settings_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="設定", menu=settings_menu)
+        settings_menu.add_command(label="設定を開く...", command=self._show_settings)
+
+        # Theme submenu
+        theme_menu = tk.Menu(settings_menu, tearoff=0)
+        settings_menu.add_cascade(label="テーマ", menu=theme_menu)
+        self.theme_var = tk.StringVar(value=self.theme_name)
+        for key, t in THEMES.items():
+            theme_menu.add_radiobutton(
+                label=t.name, variable=self.theme_var, value=key,
+                command=lambda: self._change_theme(self.theme_var.get())
+            )
+
+        # Help menu
+        help_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="ヘルプ", menu=help_menu)
+        help_menu.add_command(label="ルール", command=self._show_rules, accelerator="F1")
+        help_menu.add_separator()
+        help_menu.add_command(label="このゲームについて", command=self._show_about)
+
+        # Keyboard shortcuts
+        self.root.bind("<Control-n>", lambda e: self._new_game())
+        self.root.bind("<Control-q>", lambda e: self.root.quit())
+        self.root.bind("<F1>", lambda e: self._show_rules())
+
+    def _create_start_screen(self) -> None:
+        self.start_screen = StartScreen(
+            self.root, self.theme,
+            on_start=self._start_game,
+            on_settings=self._show_settings,
+            on_rules=self._show_rules
+        )
+        self.start_screen.pack(fill="both", expand=True)
+
+    def _create_game_ui(self) -> None:
+        # Main container
+        self.main_frame = tk.Frame(self.root, bg=self.theme.window_bg)
+
+        # Left panel (Player 1)
+        self.left_panel = tk.Frame(self.main_frame, bg=self.theme.window_bg, width=180)
+        self.left_panel.pack(side="left", fill="y", padx=(10, 0), pady=10)
+        self.left_panel.pack_propagate(False)
+
+        self.player1_panel = PlayerPanel(self.left_panel, 1, self.theme, "プレイヤー 1")
+        self.player1_panel.pack(pady=20)
+
+        # Stats display
+        self.stats_frame = tk.Frame(self.left_panel, bg=self.theme.panel_bg, padx=10, pady=10)
+        self.stats_frame.pack(pady=20, fill="x", padx=10)
+
+        stats_title = tk.Label(
+            self.stats_frame, text="統計",
+            font=("Helvetica", 12, "bold"),
+            bg=self.theme.panel_bg, fg=self.theme.text_primary
+        )
+        stats_title.pack()
+
+        self.stats_label = tk.Label(
+            self.stats_frame, text="",
+            font=("Helvetica", 10),
+            bg=self.theme.panel_bg, fg=self.theme.text_secondary,
+            justify="left"
+        )
+        self.stats_label.pack(pady=(5, 0))
+        self._update_stats_display()
+
+        # Center area (Board)
+        self.center_frame = tk.Frame(self.main_frame, bg=self.theme.window_bg)
+        self.center_frame.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+
+        # Status area
+        self.status_frame = tk.Frame(self.center_frame, bg=self.theme.window_bg)
+        self.status_frame.pack(fill="x", pady=(0, 10))
+
+        self.status_var = tk.StringVar()
+        self.status_label = tk.Label(
+            self.status_frame,
+            textvariable=self.status_var,
+            font=("Helvetica", 14, "bold"),
+            bg=self.theme.window_bg,
+            fg=self.theme.text_primary,
+        )
+        self.status_label.pack()
+
+        self.outcome_var = tk.StringVar(value="")
+        self.outcome_label = tk.Label(
+            self.status_frame,
+            textvariable=self.outcome_var,
+            font=("Helvetica", 16, "bold"),
+            bg=self.theme.window_bg,
+            fg=self.theme.text_accent,
+            wraplength=500,
+        )
+        self.outcome_label.pack(pady=(5, 0))
+
+        # Canvas
+        self.canvas = tk.Canvas(
+            self.center_frame,
+            bg=self.theme.board_bg_top,
+            highlightthickness=0
+        )
+        self.canvas.pack(fill="both", expand=True)
+        self.canvas.bind("<Configure>", self.on_canvas_configure)
+
+        # Particle system for celebrations
+        self.particle_system = ParticleSystem(self.canvas)
+
+        # Button area
+        self.button_frame = tk.Frame(self.center_frame, bg=self.theme.window_bg)
+        self.button_frame.pack(fill="x", pady=(10, 0))
+
+        self.neutralize_button = StyledButton(
+            self.button_frame, "相手の石を無効化", self.theme,
+            command=self.on_remove, width=180, height=40, icon="⚡", style="danger"
+        )
+        self.neutralize_button.pack(side="left", padx=5)
+        self.neutralize_button.set_state("disabled")
+        self.neutralize_tooltip = Tooltip(
+            self.neutralize_button, "相手が最後に置いた石を無効化します（1回のみ使用可能）", self.theme
+        )
+
+        self.reset_button = StyledButton(
+            self.button_frame, "新しいゲーム", self.theme,
+            command=self._new_game, width=150, height=40, icon="🔄", style="secondary"
+        )
+        self._reset_button_visible = False
+
+        # Right panel (Player 2)
+        self.right_panel = tk.Frame(self.main_frame, bg=self.theme.window_bg, width=180)
+        self.right_panel.pack(side="right", fill="y", padx=(0, 10), pady=10)
+        self.right_panel.pack_propagate(False)
+
+        self.player2_panel = PlayerPanel(self.right_panel, 2, self.theme, "プレイヤー 2")
+        self.player2_panel.pack(pady=20)
+
+        # History display
+        self.history_frame = tk.Frame(self.right_panel, bg=self.theme.panel_bg, padx=10, pady=10)
+        self.history_frame.pack(pady=20, fill="both", expand=True, padx=10)
+
+        history_title = tk.Label(
+            self.history_frame, text="最近の手",
+            font=("Helvetica", 12, "bold"),
+            bg=self.theme.panel_bg, fg=self.theme.text_primary
+        )
+        history_title.pack()
+
+        self.history_listbox = tk.Listbox(
+            self.history_frame,
+            font=("Helvetica", 10),
+            bg=self.theme.panel_bg,
+            fg=self.theme.text_secondary,
+            selectbackground=self.theme.cell_accent,
+            relief="flat",
+            height=10,
+        )
+        self.history_listbox.pack(fill="both", expand=True, pady=(5, 0))
+
+    def _start_game(self) -> None:
+        if hasattr(self, 'start_screen'):
+            self.start_screen.stop_animation()
+            self.start_screen.pack_forget()
+            self.start_screen.destroy()
+
+        self._game_started = True
+        self._game_over = False
+        self._create_game_ui()
+        self.main_frame.pack(fill="both", expand=True)
         self._draw_board()
         self.update_board()
         self.update_status()
+
+    def _return_to_title(self) -> None:
+        if self._game_started:
+            if hasattr(self, 'main_frame'):
+                self.main_frame.pack_forget()
+                self.main_frame.destroy()
+            self._game_started = False
+            self._create_start_screen()
+
+    def _new_game(self) -> None:
+        if not self._game_started:
+            self._start_game()
+            return
+
+        self._hide_reset_button()
+        self.game = Hex3TabooGame(radius=self.board_radius)
+        self._cell_states = {coord: None for coord in self.game.board.cells}
+        self._target_stone_colors.clear()
+        self._active_tweens.clear()
+        self._game_over = False
+        self._stop_line_highlight()
+        self.particle_system.clear()
+        self._draw_board()
+        self.update_board()
+        self.update_status()
+        self.outcome_var.set("")
+        self.history_listbox.delete(0, tk.END)
+        self.canvas.tag_bind("cell", "<Button-1>", self._handle_cell_click)
+
+    def _show_settings(self) -> None:
+        SettingsDialog(
+            self.root, self.theme_name, self.board_radius,
+            self._apply_settings
+        )
+
+    def _apply_settings(self, theme_name: str, radius: int) -> None:
+        theme_changed = theme_name != self.theme_name
+        radius_changed = radius != self.board_radius
+
+        if theme_changed:
+            self._change_theme(theme_name)
+
+        if radius_changed:
+            self.board_radius = radius
+            if self._game_started:
+                self._new_game()
+
+    def _change_theme(self, theme_name: str) -> None:
+        self.theme_name = theme_name
+        self.theme = THEMES[theme_name]
+        self.theme_var.set(theme_name)
+
+        self.root.config(bg=self.theme.window_bg)
+
+        if not self._game_started:
+            if hasattr(self, 'start_screen'):
+                self.start_screen.update_theme(self.theme)
+        else:
+            self._update_game_theme()
+
+    def _update_game_theme(self) -> None:
+        # Update all widgets with new theme
+        self.main_frame.config(bg=self.theme.window_bg)
+        self.left_panel.config(bg=self.theme.window_bg)
+        self.right_panel.config(bg=self.theme.window_bg)
+        self.center_frame.config(bg=self.theme.window_bg)
+        self.status_frame.config(bg=self.theme.window_bg)
+        self.status_label.config(bg=self.theme.window_bg, fg=self.theme.text_primary)
+        self.outcome_label.config(bg=self.theme.window_bg, fg=self.theme.text_accent)
+        self.button_frame.config(bg=self.theme.window_bg)
+        self.canvas.config(bg=self.theme.board_bg_top)
+
+        self.player1_panel.update_theme(self.theme)
+        self.player2_panel.update_theme(self.theme)
+        self.neutralize_button.update_theme(self.theme)
+        self.reset_button.update_theme(self.theme)
+
+        self.stats_frame.config(bg=self.theme.panel_bg)
+        for child in self.stats_frame.winfo_children():
+            child.config(bg=self.theme.panel_bg)
+        self.stats_label.config(fg=self.theme.text_secondary)
+
+        self.history_frame.config(bg=self.theme.panel_bg)
+        for child in self.history_frame.winfo_children():
+            if isinstance(child, tk.Label):
+                child.config(bg=self.theme.panel_bg, fg=self.theme.text_primary)
+        self.history_listbox.config(
+            bg=self.theme.panel_bg, fg=self.theme.text_secondary,
+            selectbackground=self.theme.cell_accent
+        )
+
+        self._draw_board()
+        self.update_board()
+
+    def _show_rules(self) -> None:
+        RulesDialog(self.root, self.theme)
+
+    def _show_about(self) -> None:
+        if messagebox:
+            messagebox.showinfo(
+                "このゲームについて",
+                "ヘックス3-タブー v2.0\n\n"
+                "戦略的な六角形ボードゲーム\n\n"
+                "4連で勝利、孤立した3連で敗北！\n"
+                "シンプルなルールで奥深い戦略性を楽しめます。"
+            )
+
+    def _update_stats_display(self) -> None:
+        if hasattr(self, 'stats_label'):
+            text = f"P1勝利: {self.stats.player1_wins}\n"
+            text += f"P2勝利: {self.stats.player2_wins}\n"
+            text += f"引分け: {self.stats.draws}\n"
+            text += f"総ゲーム: {self.stats.total_games}"
+            if self.stats.current_streak > 1:
+                text += f"\n連勝: P{self.stats.streak_player} ({self.stats.current_streak})"
+            self.stats_label.config(text=text)
 
     def run(self) -> None:
         self.root.mainloop()
@@ -407,23 +1828,16 @@ class Hex3TabooGUI:
             factor_top = step / steps
             factor_bottom = (step + 1) / steps
             color = self._interpolate_color(
-                self.BOARD_BACKGROUND_TOP,
-                self.BOARD_BACKGROUND_BOTTOM,
+                self.theme.board_bg_top,
+                self.theme.board_bg_bottom,
                 (factor_top + factor_bottom) / 2,
             )
             y0 = height * factor_top
             y1 = height * factor_bottom
             self.canvas.create_rectangle(0, y0, width, y1, fill=color, outline="")
-        border_color = self._interpolate_color(
-            self.BOARD_BACKGROUND_BOTTOM, "#9fb0c9", 0.25
-        )
         self.canvas.create_rectangle(
-            2,
-            2,
-            width - 2,
-            height - 2,
-            outline=border_color,
-            width=3,
+            2, 2, width - 2, height - 2,
+            outline=self.theme.board_border, width=3
         )
 
     def _compute_tile_color(self, coord: AxialCoord) -> str:
@@ -433,13 +1847,16 @@ class Hex3TabooGUI:
         wave = (math.sin((coord[0] - coord[1]) * math.pi / 3) + 1.0) / 2.0
         blend = (normalized_q + normalized_r + wave) / 3.0
         blend = max(0.0, min(1.0, blend * 0.6))
-        return self._interpolate_color(self.CELL_BASE_COLOR, self.CELL_ACCENT_COLOR, blend)
+        return self._interpolate_color(self.theme.cell_base, self.theme.cell_accent, blend)
 
     def _tile_hover_color(self, coord: AxialCoord) -> str:
-        base = self._tile_base_colors.get(coord, self.CELL_BASE_COLOR)
-        return self._interpolate_color(base, "#ffffff", self.HOVER_FILL_BLEND)
+        base = self._tile_base_colors.get(coord, self.theme.cell_base)
+        return self._interpolate_color(base, "#ffffff", 0.18)
 
     def _draw_board(self) -> None:
+        if not hasattr(self, 'canvas'):
+            return
+
         canvas_width = self.canvas.winfo_width()
         canvas_height = self.canvas.winfo_height()
         if canvas_width <= 1 or canvas_height <= 1:
@@ -462,7 +1879,6 @@ class Hex3TabooGUI:
         self._active_tweens.clear()
         self.cell_items.clear()
         self.coord_to_item.clear()
-
         self.cell_shadows.clear()
         self.stone_items.clear()
         self._stone_bounds.clear()
@@ -490,23 +1906,16 @@ class Hex3TabooGUI:
                 else:
                     shadow_points.append(value + shadow_dy)
             shadow_item = self.canvas.create_polygon(
-                shadow_points,
-                outline="",
-                fill=self.SHADOW_COLOR,
-                stipple="gray50",
-                tags=("shadow",),
+                shadow_points, outline="", fill=self.theme.shadow_color,
+                stipple="gray50", tags=("shadow",)
             )
             self.cell_shadows[coord] = shadow_item
 
             tile_color = self._compute_tile_color(coord)
             self._tile_base_colors[coord] = tile_color
             item = self.canvas.create_polygon(
-                shifted_points,
-                outline=self.CELL_EDGE_COLOR,
-                fill=tile_color,
-                width=2,
-                joinstyle=tk.ROUND,
-                tags=("cell",),
+                shifted_points, outline=self.theme.cell_edge, fill=tile_color,
+                width=2, joinstyle=tk.ROUND, tags=("cell",)
             )
             self.cell_items[item] = coord
             self.coord_to_item[coord] = item
@@ -515,33 +1924,23 @@ class Hex3TabooGUI:
             center_y = y + offset_y
             stone_radius = self.hex_size * 0.48
             stone_item = self.canvas.create_oval(
-                center_x - stone_radius,
-                center_y - stone_radius,
-                center_x + stone_radius,
-                center_y + stone_radius,
-                fill=self.EMPTY_STONE_COLOR,
-                outline=self.CELL_EDGE_COLOR,
-                width=3,
-                state=tk.HIDDEN,
-                tags=("stone",),
+                center_x - stone_radius, center_y - stone_radius,
+                center_x + stone_radius, center_y + stone_radius,
+                fill=self.theme.empty_stone, outline=self.theme.cell_edge,
+                width=3, state=tk.HIDDEN, tags=("stone",)
             )
             self.stone_items[coord] = stone_item
             self._stone_bounds[stone_item] = (
-                center_x - stone_radius,
-                center_y - stone_radius,
-                center_x + stone_radius,
-                center_y + stone_radius,
+                center_x - stone_radius, center_y - stone_radius,
+                center_x + stone_radius, center_y + stone_radius
             )
-            self._target_stone_colors[stone_item] = self.EMPTY_STONE_COLOR
+            self._target_stone_colors[stone_item] = self.theme.empty_stone
 
             label_font_size = max(8, int(self.hex_size * 0.26))
             label = self.canvas.create_text(
-                center_x,
-                center_y + self.hex_size * 0.62,
-                text=f"{coord[0]},{coord[1]}",
-                fill=self.COORD_TEXT_COLOR,
-                font=("Helvetica", label_font_size, "bold"),
-                tags=("coord_label",),
+                center_x, center_y + self.hex_size * 0.62,
+                text=f"{coord[0]},{coord[1]}", fill=self.theme.coord_text,
+                font=("Helvetica", label_font_size, "bold"), tags=("coord_label",)
             )
             self.canvas.itemconfig(label, state=tk.DISABLED)
             self.canvas.tag_lower(label)
@@ -553,7 +1952,9 @@ class Hex3TabooGUI:
         self.canvas.tag_bind("cell", "<Enter>", self._handle_cell_enter)
         self.canvas.tag_bind("cell", "<Leave>", self._handle_cell_leave)
 
-    def _handle_cell_click(self, event: tk.Event) -> None:  # type: ignore[override]
+    def _handle_cell_click(self, event: tk.Event) -> None:
+        if self._game_over:
+            return
         current = event.widget.find_withtag("current")
         if not current:
             return
@@ -561,27 +1962,27 @@ class Hex3TabooGUI:
         if coord is not None:
             self.on_cell_clicked(coord)
 
-    def _handle_cell_enter(self, event: tk.Event) -> None:  # type: ignore[override]
+    def _handle_cell_enter(self, event: tk.Event) -> None:
         current = event.widget.find_withtag("current")
         if not current:
             return
         self._on_cell_enter(current[0])
 
-    def _handle_cell_leave(self, event: tk.Event) -> None:  # type: ignore[override]
+    def _handle_cell_leave(self, event: tk.Event) -> None:
         current = event.widget.find_withtag("current")
         if not current:
             return
         self._on_cell_leave(current[0])
 
     def _on_cell_enter(self, item_id: int) -> None:
-        if self._hovered_item == item_id:
+        if self._hovered_item == item_id or self._game_over:
             return
         coord = self.cell_items.get(item_id)
         if coord is None:
             return
         self._hovered_item = item_id
         hover_color = self._tile_hover_color(coord)
-        self.canvas.itemconfig(item_id, fill=hover_color, outline=self.HOVER_OUTLINE_COLOR, width=3)
+        self.canvas.itemconfig(item_id, fill=hover_color, outline=self.theme.hover_outline, width=3)
         stone_id = self.stone_items.get(coord)
         if stone_id is not None:
             self.canvas.tag_raise(stone_id)
@@ -593,8 +1994,8 @@ class Hex3TabooGUI:
         if coord is None:
             return
         self._hovered_item = None
-        base_color = self._tile_base_colors.get(coord, self.CELL_BASE_COLOR)
-        self.canvas.itemconfig(item_id, fill=base_color, outline=self.CELL_EDGE_COLOR, width=2)
+        base_color = self._tile_base_colors.get(coord, self.theme.cell_base)
+        self.canvas.itemconfig(item_id, fill=base_color, outline=self.theme.cell_edge, width=2)
 
     def _animate_stone_placement(self, stone_id: int, duration_ms: int = 260) -> None:
         bounds = self._stone_bounds.get(stone_id)
@@ -608,16 +2009,14 @@ class Hex3TabooGUI:
         center_y = (y0 + y1) / 2
 
         def update(progress: float) -> None:
-            eased = ease_out_quad(progress)
+            eased = ease_out_bounce(progress)
             eased = max(0.0, min(1.0, eased))
             radius_x = (x1 - x0) / 2 * eased
             radius_y = (y1 - y0) / 2 * eased
             self.canvas.coords(
                 stone_id,
-                center_x - radius_x,
-                center_y - radius_y,
-                center_x + radius_x,
-                center_y + radius_y,
+                center_x - radius_x, center_y - radius_y,
+                center_x + radius_x, center_y + radius_y
             )
 
         def finish() -> None:
@@ -655,14 +2054,10 @@ class Hex3TabooGUI:
             for index in range(0, len(polygon), 2):
                 x = polygon[index]
                 y = polygon[index + 1]
-                if x < min_x:
-                    min_x = x
-                if x > max_x:
-                    max_x = x
-                if y < min_y:
-                    min_y = y
-                if y > max_y:
-                    max_y = y
+                min_x = min(min_x, x)
+                max_x = max(max_x, x)
+                min_y = min(min_y, y)
+                max_y = max(max_y, y)
         if not math.isfinite(min_x):
             min_x = max_x = min_y = max_y = 0.0
         return min_x, max_x, min_y, max_y
@@ -674,7 +2069,7 @@ class Hex3TabooGUI:
         if board_width <= 0 or board_height <= 0:
             return
         scale = min(canvas_width / board_width, canvas_height / board_height)
-        target_size = max(5.0, scale * 0.9)
+        target_size = max(5.0, scale * 0.85)
         if abs(target_size - self.hex_size) > 1e-6:
             self.hex_size = target_size
 
@@ -686,6 +2081,7 @@ class Hex3TabooGUI:
             if messagebox is not None:
                 messagebox.showinfo("無効な手", str(exc))
             return
+        self._add_history_entry(acting_player, "place", coord)
         self._finalize_turn(acting_player)
 
     def on_remove(self) -> None:
@@ -696,85 +2092,120 @@ class Hex3TabooGUI:
             if messagebox is not None:
                 messagebox.showinfo("無効化できません", str(exc))
             return
-        if removed is not None and messagebox is not None:
-            messagebox.showinfo("無効化", f"{removed}の石を無効化しました。")
+        if removed is not None:
+            self._add_history_entry(acting_player, "disable", removed)
         self._finalize_turn(acting_player)
+
+    def _add_history_entry(self, player: int, action: str, coord: AxialCoord) -> None:
+        symbol = "X" if player == 1 else "O"
+        if action == "place":
+            text = f"P{player}({symbol}): 配置 {coord}"
+        else:
+            text = f"P{player}({symbol}): 無効化 {coord}"
+        self.history_listbox.insert(0, text)
+        if self.history_listbox.size() > 10:
+            self.history_listbox.delete(10)
 
     def _finalize_turn(self, acting_player: int) -> None:
         result = self.game.check_game_end()
         self.update_board()
+
         if result:
-            _outcome, message = result
+            outcome, message = result
             line_coords = self.game.last_detected_line
+            self._game_over = True
+
+            # Record stats
+            self.stats.record_result(outcome, acting_player)
+            self._update_stats_display()
+
             self.status_var.set("ゲーム終了")
             self.outcome_var.set(message)
-            self.remove_button.config(state=tk.DISABLED)
+            self.neutralize_button.set_state("disabled")
+
             if self._hovered_item is not None:
                 self._on_cell_leave(self._hovered_item)
             self.canvas.tag_unbind("cell", "<Button-1>")
+
             if line_coords:
                 self._animate_line_highlight(line_coords)
+
+            # Celebration particles
+            if outcome == "win":
+                # Get center of winning line for particle burst
+                if line_coords:
+                    center_coord = line_coords[len(line_coords) // 2]
+                    if center_coord in self.stone_items:
+                        stone_id = self.stone_items[center_coord]
+                        bounds = self._stone_bounds.get(stone_id)
+                        if bounds:
+                            cx = (bounds[0] + bounds[2]) / 2
+                            cy = (bounds[1] + bounds[3]) / 2
+                            colors = [self.theme.highlight_color, self.theme.success_color,
+                                      self.theme.player1_color if acting_player == 1 else self.theme.player2_color]
+                            self.particle_system.emit_burst(cx, cy, count=80, colors=colors)
+
+                # Confetti effect
+                self.root.after(300, lambda: self.particle_system.emit_confetti(
+                    self.canvas.winfo_width(), self.canvas.winfo_height(), count=150
+                ))
+
             self._show_reset_button()
             return
+
         self.game.switch_player()
         self.update_status()
         self.update_remove_button()
 
-    def reset_game(self) -> None:
-        """Reset the board for a new game."""
-        self._hide_reset_button()
-        self.game = Hex3TabooGame(radius=self.board_radius)
-        self._cell_states = {coord: None for coord in self.game.board.cells}
-        self._target_stone_colors.clear()
-        self._active_tweens.clear()
-        self._stop_line_highlight()
-        self._draw_board()
-        self.update_board()
-        self.update_status()
-        self.outcome_var.set("")
-
     def update_board(self) -> None:
+        if not hasattr(self, 'canvas'):
+            return
+
         occupant_to_color = {
-            None: self.EMPTY_STONE_COLOR,
-            HexBoard.DISABLED_STONE: self.DISABLED_STONE_COLOR,
-            1: self.PLAYER_COLORS[1],
-            2: self.PLAYER_COLORS[2],
+            None: self.theme.empty_stone,
+            HexBoard.DISABLED_STONE: self.theme.disabled_stone,
+            1: self.theme.player1_color,
+            2: self.theme.player2_color,
         }
         occupant_to_outline = {
-            None: self.CELL_EDGE_COLOR,
-            HexBoard.DISABLED_STONE: self.DISABLED_OUTLINE_COLOR,
-            1: self.PLAYER_OUTLINES[1],
-            2: self.PLAYER_OUTLINES[2],
+            None: self.theme.cell_edge,
+            HexBoard.DISABLED_STONE: self.theme.disabled_outline,
+            1: self.theme.player1_outline,
+            2: self.theme.player2_outline,
         }
+
+        player1_stones = 0
+        player2_stones = 0
+
         for coord, stone_id in self.stone_items.items():
             occupant = self.game.board.cells[coord]
             target_color = occupant_to_color[occupant]
             target_outline = occupant_to_outline[occupant]
             previous = self._cell_states.get(coord)
-            previous_color = occupant_to_color.get(previous, self.EMPTY_STONE_COLOR)
+            previous_color = occupant_to_color.get(previous, self.theme.empty_stone)
+
+            if occupant == 1:
+                player1_stones += 1
+            elif occupant == 2:
+                player2_stones += 1
 
             if occupant is None:
                 if previous is None:
                     self.canvas.itemconfig(stone_id, state=tk.HIDDEN)
                 else:
-                    self._start_fill_animation(
-                        stone_id, previous_color, target_color, hide_after=True
-                    )
+                    self._start_fill_animation(stone_id, previous_color, target_color, hide_after=True)
                 self._target_stone_colors[stone_id] = target_color
                 self._cell_states[coord] = None
                 continue
 
             self.canvas.itemconfig(
-                stone_id,
-                state=tk.NORMAL,
-                outline=target_outline,
-                width=3,
-                dash=(3, 2) if occupant == HexBoard.DISABLED_STONE else None,
+                stone_id, state=tk.NORMAL, outline=target_outline, width=3,
+                dash=(3, 2) if occupant == HexBoard.DISABLED_STONE else None
             )
 
             if previous is None:
-                self.canvas.itemconfig(stone_id, fill=self.EMPTY_STONE_COLOR)
-                self._start_fill_animation(stone_id, self.EMPTY_STONE_COLOR, target_color)
+                self.canvas.itemconfig(stone_id, fill=self.theme.empty_stone)
+                self._start_fill_animation(stone_id, self.theme.empty_stone, target_color)
                 self._animate_stone_placement(stone_id)
             elif previous != occupant:
                 self._start_fill_animation(stone_id, previous_color, target_color)
@@ -783,24 +2214,45 @@ class Hex3TabooGUI:
 
             self._target_stone_colors[stone_id] = target_color
             self._cell_states[coord] = occupant
+
         self.canvas.tag_raise("stone")
         self.update_remove_button()
 
+        # Update player panels
+        if hasattr(self, 'player1_panel'):
+            self.player1_panel.set_stone_count(player1_stones)
+            self.player2_panel.set_stone_count(player2_stones)
+
     def update_status(self) -> None:
+        if not hasattr(self, 'status_var'):
+            return
+
         token = "X" if self.game.current_player == 1 else "O"
         if self.game.current_player == 2 and self.game.can_remove():
-            action_hint = "：石を置くか無効化できます"
+            action_hint = " - 石を置くか無効化できます"
         else:
-            action_hint = "：石を置いてください"
-        self.status_var.set(f"プレイヤー{self.game.current_player}（{token}）{action_hint}")
+            action_hint = " - 石を置いてください"
+        self.status_var.set(f"プレイヤー{self.game.current_player}（{token}）の番{action_hint}")
+
+        # Update player panels
+        if hasattr(self, 'player1_panel'):
+            self.player1_panel.set_active(self.game.current_player == 1)
+            self.player2_panel.set_active(self.game.current_player == 2)
+            self.player2_panel.set_can_neutralize(
+                self.game.can_remove(),
+                self.game.removal_used[2]
+            )
 
     def update_remove_button(self) -> None:
-        if self.game.current_player == 2 and self.game.can_remove():
-            self.remove_button.config(state=tk.NORMAL)
-        else:
-            self.remove_button.config(state=tk.DISABLED)
+        if not hasattr(self, 'neutralize_button'):
+            return
 
-    def on_canvas_configure(self, event: tk.Event) -> None:  # type: ignore[override]
+        if self.game.current_player == 2 and self.game.can_remove():
+            self.neutralize_button.set_state("normal")
+        else:
+            self.neutralize_button.set_state("disabled")
+
+    def on_canvas_configure(self, event: tk.Event) -> None:
         if event.width <= 1 or event.height <= 1:
             return
         self._update_hex_size(event.width, event.height)
@@ -816,9 +2268,7 @@ class Hex3TabooGUI:
             f"{int(max(0, min(255, round(component)))):02x}" for component in rgb
         )
 
-    def _interpolate_color(
-        self, start_color: str, end_color: str, factor: float
-    ) -> str:
+    def _interpolate_color(self, start_color: str, end_color: str, factor: float) -> str:
         start_r, start_g, start_b = self._hex_to_rgb(start_color)
         end_r, end_g, end_b = self._hex_to_rgb(end_color)
         rgb = (
@@ -829,12 +2279,8 @@ class Hex3TabooGUI:
         return self._rgb_to_hex(rgb)
 
     def _start_fill_animation(
-        self,
-        item_id: int,
-        start_color: str,
-        end_color: str,
-        duration_ms: int = 250,
-        hide_after: bool = False,
+        self, item_id: int, start_color: str, end_color: str,
+        duration_ms: int = 250, hide_after: bool = False
     ) -> None:
         key = (item_id, "color")
         if key in self._active_tweens:
@@ -872,9 +2318,7 @@ class Hex3TabooGUI:
         self._line_animation_cycle = 0
         self._line_highlight_tween = None
 
-    def _animate_line_highlight(
-        self, coords: List[AxialCoord], highlight_color: str = "#ffd166"
-    ) -> None:
+    def _animate_line_highlight(self, coords: List[AxialCoord]) -> None:
         self._stop_line_highlight()
         items = [self.stone_items[c] for c in coords if c in self.stone_items]
         if not items:
@@ -887,7 +2331,7 @@ class Hex3TabooGUI:
         for item in items:
             self.canvas.tag_raise(item)
         self._line_animation_cycle = 0
-        self._run_line_highlight_cycle(highlight_color)
+        self._run_line_highlight_cycle(self.theme.highlight_color)
 
     def _run_line_highlight_cycle(self, highlight_color: str) -> None:
         if not self._line_animation_items:
@@ -897,15 +2341,9 @@ class Hex3TabooGUI:
 
         def forward_complete() -> None:
             self._line_highlight_tween = Tween(
-                self.canvas,
-                260,
-                lambda progress: self._update_line_colors(
-                    items,
-                    highlight_color,
-                    base_colors,
-                    progress,
-                ),
-                on_complete=backward_complete,
+                self.canvas, 260,
+                lambda progress: self._update_line_colors(items, highlight_color, base_colors, progress),
+                on_complete=backward_complete
             )
             self._line_highlight_tween.start()
 
@@ -922,43 +2360,28 @@ class Hex3TabooGUI:
                 self._line_highlight_tween = None
 
         self._line_highlight_tween = Tween(
-            self.canvas,
-            260,
-            lambda progress: self._update_line_colors(
-                items,
-                base_colors,
-                highlight_color,
-                progress,
-            ),
-            on_complete=forward_complete,
+            self.canvas, 260,
+            lambda progress: self._update_line_colors(items, base_colors, highlight_color, progress),
+            on_complete=forward_complete
         )
         self._line_highlight_tween.start()
 
     def _update_line_colors(
-        self,
-        items: List[int],
+        self, items: List[int],
         start_colors: Union[Dict[int, str], str],
         end_colors: Union[Dict[int, str], str],
-        progress: float,
+        progress: float
     ) -> None:
         eased = ease_out_quad(progress)
         for item in items:
-            start_color = (
-                start_colors[item]
-                if isinstance(start_colors, dict)
-                else start_colors
-            )
-            end_color = (
-                end_colors[item]
-                if isinstance(end_colors, dict)
-                else end_colors
-            )
+            start_color = start_colors[item] if isinstance(start_colors, dict) else start_colors
+            end_color = end_colors[item] if isinstance(end_colors, dict) else end_colors
             color = self._interpolate_color(start_color, end_color, eased)
             self.canvas.itemconfig(item, fill=color)
 
     def _show_reset_button(self) -> None:
         if not self._reset_button_visible:
-            self.reset_button.pack(pady=(6, 0))
+            self.reset_button.pack(side="left", padx=5)
             self._reset_button_visible = True
 
     def _hide_reset_button(self) -> None:
@@ -987,7 +2410,7 @@ def run_cli(radius: int = 4) -> None:
         try:
             acting_player = game.current_player
             result = game.take_turn(command)
-        except Exception as exc:  # broad for CLI feedback
+        except Exception as exc:
             print(f"エラー: {exc}")
             continue
         else:
@@ -1008,10 +2431,10 @@ def run_cli(radius: int = 4) -> None:
             break
 
 
-def run_gui(radius: int = 4) -> None:
+def run_gui(radius: int = 4, theme: str = "light") -> None:
     try:
         game = Hex3TabooGame(radius=radius)
-        gui = Hex3TabooGUI(game)
+        gui = Hex3TabooGUI(game, theme_name=theme)
         gui.run()
     except Exception as exc:
         print(f"エラー: GUIの初期化に失敗しました: {exc}")
@@ -1035,10 +2458,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser = argparse.ArgumentParser(description="Hex 3-Taboo プロトタイプ")
     parser.add_argument("--radius", type=int, default=4, help="盤の半径 (既定値: 4)")
     parser.add_argument(
-        "--mode",
-        choices=("cli", "gui"),
-        default="cli",
-        help="CLI または GUI モードで実行します。",
+        "--mode", choices=("cli", "gui"), default="cli",
+        help="CLI または GUI モードで実行します。"
+    )
+    parser.add_argument(
+        "--theme", choices=list(THEMES.keys()), default="light",
+        help="GUIのテーマを選択します (既定値: light)"
     )
     args = parser.parse_args(argv)
 
@@ -1054,7 +2479,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             print()
             print("CLIモードで実行する場合は: python hex3_taboo.py --mode cli")
             sys.exit(1)
-        run_gui(radius=args.radius)
+        run_gui(radius=args.radius, theme=args.theme)
     else:
         run_cli(radius=args.radius)
 
