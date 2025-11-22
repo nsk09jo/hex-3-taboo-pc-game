@@ -538,16 +538,35 @@ class AIPlayer:
     EASY = "easy"
     MEDIUM = "medium"
     HARD = "hard"
+    EXPERT = "expert"
 
     def __init__(self, difficulty: str = "medium", player_id: int = 2) -> None:
-        if difficulty not in (self.EASY, self.MEDIUM, self.HARD):
+        if difficulty not in (self.EASY, self.MEDIUM, self.HARD, self.EXPERT):
             raise ValueError(f"無効な難易度: {difficulty}")
         self.difficulty = difficulty
         self.player_id = player_id
-        self._max_depth = {self.EASY: 1, self.MEDIUM: 2, self.HARD: 4}[difficulty]
+        self._max_depth = {
+            self.EASY: 1,
+            self.MEDIUM: 3,
+            self.HARD: 5,
+            self.EXPERT: 7,
+        }[difficulty]
+        self._max_branches = {
+            self.EASY: 5,
+            self.MEDIUM: 12,
+            self.HARD: 18,
+            self.EXPERT: 25,
+        }[difficulty]
+        # Transposition table for caching evaluated positions
+        self._transposition_table: Dict[str, float] = {}
 
     def get_difficulty_name(self) -> str:
-        names = {self.EASY: "かんたん", self.MEDIUM: "ふつう", self.HARD: "むずかしい"}
+        names = {
+            self.EASY: "かんたん",
+            self.MEDIUM: "ふつう",
+            self.HARD: "むずかしい",
+            self.EXPERT: "最強",
+        }
         return names[self.difficulty]
 
     def choose_action(self, game: "Hex3TabooGame") -> Tuple[str, Optional[AxialCoord]]:
@@ -555,11 +574,15 @@ class AIPlayer:
 
         Returns: ("place", coord) or ("remove", None)
         """
+        # Clear transposition table for new decision
+        self._transposition_table.clear()
+
         if self.difficulty == self.EASY:
             return self._choose_easy(game)
         elif self.difficulty == self.MEDIUM:
             return self._choose_medium(game)
         else:
+            # HARD and EXPERT use the same algorithm with different depths
             return self._choose_hard(game)
 
     def _choose_easy(self, game: "Hex3TabooGame") -> Tuple[str, Optional[AxialCoord]]:
@@ -608,30 +631,54 @@ class AIPlayer:
         return ("place", random.choice(valid))
 
     def _choose_hard(self, game: "Hex3TabooGame") -> Tuple[str, Optional[AxialCoord]]:
-        """Minimax with alpha-beta pruning."""
+        """Enhanced Minimax with alpha-beta pruning and advanced heuristics."""
         empty = game.board.empty_cells()
         forbidden = game.forbidden_placements.get(game.current_player)
         valid = [c for c in empty if c != forbidden]
+        opponent = 1 if self.player_id == 2 else 2
 
         if not valid:
             return ("place", None)
+
+        # Priority 1: Immediate win
+        for coord in valid:
+            if self._would_win(game, coord, self.player_id):
+                return ("place", coord)
+
+        # Priority 2: Block opponent's immediate win
+        for coord in valid:
+            if self._would_win(game, coord, opponent):
+                return ("place", coord)
+
+        # Priority 3: Force opponent to lose (create situation where they must make isolated 3)
+        for coord in valid:
+            if self._forces_opponent_loss(game, coord, opponent):
+                return ("place", coord)
+
+        # Consider neutralization for critical threats
+        if game.current_player == 2 and game.can_remove():
+            neutralize_score = self._evaluate_neutralization(game)
+            if neutralize_score > 400:
+                return ("remove", None)
+
+        # Filter out losing moves (unless all moves lose)
+        safe_moves = [c for c in valid if not self._would_lose(game, c, self.player_id)]
+        if not safe_moves:
+            safe_moves = valid
+
+        # Advanced move ordering for better pruning
+        scored_moves = [(c, self._advanced_move_score(game, c)) for c in safe_moves]
+        scored_moves.sort(key=lambda x: x[1], reverse=True)
 
         best_score = float("-inf")
         best_move: Optional[AxialCoord] = None
         alpha = float("-inf")
         beta = float("inf")
 
-        # Consider neutralization first
-        if game.current_player == 2 and game.can_remove():
-            neutralize_score = self._evaluate_neutralization(game)
-            if neutralize_score > 500:
-                return ("remove", None)
+        # Limit branches based on difficulty
+        moves_to_search = scored_moves[: self._max_branches]
 
-        # Sort moves by heuristic for better pruning
-        scored_moves = [(c, self._quick_eval(game, c)) for c in valid]
-        scored_moves.sort(key=lambda x: x[1], reverse=True)
-
-        for coord, _ in scored_moves:
+        for coord, _ in moves_to_search:
             score = self._minimax(game, coord, self._max_depth, alpha, beta, False)
             if score > best_score:
                 best_score = score
@@ -651,7 +698,7 @@ class AIPlayer:
         beta: float,
         is_maximizing: bool,
     ) -> float:
-        """Minimax algorithm with alpha-beta pruning."""
+        """Enhanced Minimax with alpha-beta pruning and transposition table."""
         # Simulate move
         original_cell = game.board.cells[move]
         current = game.current_player
@@ -662,16 +709,25 @@ class AIPlayer:
 
         if has_win:
             game.board.set(move, original_cell)
-            return 10000 if current == self.player_id else -10000
+            # Prefer earlier wins (depth bonus)
+            bonus = depth * 100
+            return (10000 + bonus) if current == self.player_id else (-10000 - bonus)
 
         if has_loss:
             game.board.set(move, original_cell)
-            return -10000 if current == self.player_id else 10000
+            bonus = depth * 100
+            return (-10000 - bonus) if current == self.player_id else (10000 + bonus)
 
         if depth == 0 or game.board.is_full():
             score = self._evaluate_board(game)
             game.board.set(move, original_cell)
             return score
+
+        # Transposition table lookup
+        board_key = self._get_board_key(game)
+        if board_key in self._transposition_table:
+            game.board.set(move, original_cell)
+            return self._transposition_table[board_key]
 
         # Get valid moves for next player
         next_player = 1 if current == 2 else 2
@@ -680,15 +736,24 @@ class AIPlayer:
         valid_moves = [c for c in empty if c != forbidden]
 
         if not valid_moves:
+            score = self._evaluate_board(game)
             game.board.set(move, original_cell)
-            return self._evaluate_board(game)
+            return score
 
         # Switch player for simulation
         game.current_player = next_player
 
+        # Sort moves for better pruning (critical moves first)
+        scored_valid = [(c, self._quick_eval_for_player(game, c, next_player)) for c in valid_moves]
+        scored_valid.sort(key=lambda x: x[1], reverse=is_maximizing)
+        sorted_moves = [c for c, _ in scored_valid]
+
+        # Dynamic branching: more branches at shallow depths
+        branch_limit = min(self._max_branches, max(8, self._max_branches - (self._max_depth - depth) * 2))
+
         if is_maximizing:
             max_eval = float("-inf")
-            for next_move in valid_moves[:10]:  # Limit branching
+            for next_move in sorted_moves[:branch_limit]:
                 eval_score = self._minimax(game, next_move, depth - 1, alpha, beta, False)
                 max_eval = max(max_eval, eval_score)
                 alpha = max(alpha, eval_score)
@@ -696,10 +761,11 @@ class AIPlayer:
                     break
             game.board.set(move, original_cell)
             game.current_player = current
+            self._transposition_table[board_key] = max_eval
             return max_eval
         else:
             min_eval = float("inf")
-            for next_move in valid_moves[:10]:  # Limit branching
+            for next_move in sorted_moves[:branch_limit]:
                 eval_score = self._minimax(game, next_move, depth - 1, alpha, beta, True)
                 min_eval = min(min_eval, eval_score)
                 beta = min(beta, eval_score)
@@ -707,12 +773,26 @@ class AIPlayer:
                     break
             game.board.set(move, original_cell)
             game.current_player = current
+            self._transposition_table[board_key] = min_eval
             return min_eval
 
+    def _get_board_key(self, game: "Hex3TabooGame") -> str:
+        """Generate a unique key for the current board state."""
+        items = sorted(
+            (f"{k[0]},{k[1]}:{v}" for k, v in game.board.cells.items() if v is not None),
+        )
+        return f"{game.current_player}|" + "|".join(items)
+
     def _evaluate_board(self, game: "Hex3TabooGame") -> float:
-        """Evaluate board position for the AI player."""
+        """Enhanced board evaluation with threat detection and fork recognition."""
         score = 0.0
         opponent = 1 if self.player_id == 2 else 2
+
+        # Track threats and opportunities
+        ai_threats = 0  # Open 3s that could become wins
+        opponent_threats = 0
+        ai_strong_2s = 0  # Open 2s with space to extend
+        opponent_strong_2s = 0
 
         for coord, occupant in game.board.cells.items():
             if occupant is None or occupant == HexBoard.DISABLED_STONE:
@@ -723,33 +803,81 @@ class AIPlayer:
 
                 if occupant == self.player_id:
                     if line_length >= 4:
-                        score += 1000
+                        score += 5000  # Winning position
                     elif line_length == 3:
                         if open_ends == 0:
-                            score -= 500  # Isolated 3 = loss risk
-                        elif open_ends >= 1:
-                            score += 100  # Potential win
-                    elif line_length == 2 and open_ends >= 1:
-                        score += 20
+                            score -= 3000  # Isolated 3 = immediate loss
+                        elif open_ends == 2:
+                            score += 800  # Double-open 3 = very strong
+                            ai_threats += 1
+                        elif open_ends == 1:
+                            score += 200  # Single-open 3 = threat
+                            ai_threats += 1
+                    elif line_length == 2:
+                        if open_ends == 2:
+                            score += 80  # Double-open 2 = good foundation
+                            ai_strong_2s += 1
+                        elif open_ends == 1:
+                            score += 30  # Single-open 2
                 else:  # Opponent
                     if line_length >= 4:
-                        score -= 1000
+                        score -= 5000  # Opponent winning
                     elif line_length == 3:
                         if open_ends == 0:
-                            score += 500  # Opponent's loss = good
-                        elif open_ends >= 1:
-                            score -= 100  # Block this
-                    elif line_length == 2 and open_ends >= 1:
-                        score -= 20
+                            score += 3000  # Opponent's isolated 3 = their loss
+                        elif open_ends == 2:
+                            score -= 700  # Dangerous threat
+                            opponent_threats += 1
+                        elif open_ends == 1:
+                            score -= 180  # Threat to block
+                            opponent_threats += 1
+                    elif line_length == 2:
+                        if open_ends == 2:
+                            score -= 60  # Opponent building
+                            opponent_strong_2s += 1
+                        elif open_ends == 1:
+                            score -= 25
 
-        # Prefer center positions
+        # Fork bonus: multiple threats are exponentially more valuable
+        if ai_threats >= 2:
+            score += ai_threats * 300  # Multiple threats = likely win
+        if opponent_threats >= 2:
+            score -= opponent_threats * 250  # Hard to defend multiple threats
+
+        # Building potential bonus
+        score += ai_strong_2s * 15
+        score -= opponent_strong_2s * 12
+
+        # Positional evaluation: prefer center and connected positions
+        ai_center_score = 0.0
+        opponent_center_score = 0.0
+        ai_connectivity = 0
+        opponent_connectivity = 0
+
         for coord, occupant in game.board.cells.items():
+            if occupant is None or occupant == HexBoard.DISABLED_STONE:
+                continue
+
+            # Center preference (using hex distance)
+            dist = (abs(coord[0]) + abs(coord[1]) + abs(-coord[0] - coord[1])) // 2
+            center_value = max(0, 15 - dist * 2)
+
+            # Connectivity: count adjacent friendly stones
+            adj_count = 0
+            for d in HexBoard.AXIAL_DIRECTIONS:
+                neighbor = (coord[0] + d[0], coord[1] + d[1])
+                if game.board.cells.get(neighbor) == occupant:
+                    adj_count += 1
+
             if occupant == self.player_id:
-                dist = abs(coord[0]) + abs(coord[1]) + abs(-coord[0] - coord[1])
-                score += max(0, 10 - dist)
-            elif occupant == opponent:
-                dist = abs(coord[0]) + abs(coord[1]) + abs(-coord[0] - coord[1])
-                score -= max(0, 5 - dist)
+                ai_center_score += center_value
+                ai_connectivity += adj_count * 8
+            else:
+                opponent_center_score += center_value
+                opponent_connectivity += adj_count * 6
+
+        score += ai_center_score - opponent_center_score * 0.8
+        score += ai_connectivity - opponent_connectivity * 0.7
 
         return score
 
@@ -955,6 +1083,191 @@ class AIPlayer:
                 score += 10
 
         return score
+
+    def _quick_eval_for_player(
+        self, game: "Hex3TabooGame", coord: AxialCoord, player: int
+    ) -> float:
+        """Quick evaluation for a specific player (used in minimax)."""
+        score = 0.0
+        opponent = 1 if player == 2 else 2
+
+        # High priority: check if this move wins
+        if self._would_win(game, coord, player):
+            return 10000
+
+        # High priority: check if this blocks opponent's win
+        if self._would_win(game, coord, opponent):
+            return 8000
+
+        # Check if this creates dangerous isolated 3
+        if self._would_lose(game, coord, player):
+            return -5000
+
+        # Center preference
+        dist = abs(coord[0]) + abs(coord[1]) + abs(-coord[0] - coord[1])
+        score += max(0, 25 - dist * 2)
+
+        # Count adjacent friendly and enemy stones
+        friendly_adj = 0
+        enemy_adj = 0
+        for direction in HexBoard.AXIAL_DIRECTIONS:
+            adj = (coord[0] + direction[0], coord[1] + direction[1])
+            cell_val = game.board.cells.get(adj)
+            if cell_val == player:
+                friendly_adj += 1
+            elif cell_val == opponent:
+                enemy_adj += 1
+
+        # Building connections is good
+        score += friendly_adj * 15
+        # Being near opponent can be tactical
+        score += enemy_adj * 5
+
+        # Check line potential
+        for direction in HexBoard.AXIAL_DIRECTIONS:
+            line_score = self._evaluate_line_potential(game, coord, direction, player)
+            score += line_score
+
+        return score
+
+    def _evaluate_line_potential(
+        self,
+        game: "Hex3TabooGame",
+        coord: AxialCoord,
+        direction: AxialCoord,
+        player: int,
+    ) -> float:
+        """Evaluate potential for line building at this position."""
+        score = 0.0
+        opposite = (-direction[0], -direction[1])
+
+        # Count friendly stones in both directions
+        forward_count = 0
+        forward_space = 0
+        cursor = (coord[0] + direction[0], coord[1] + direction[1])
+        while cursor in game.board.cells:
+            cell = game.board.cells.get(cursor)
+            if cell == player:
+                forward_count += 1
+            elif cell is None:
+                forward_space += 1
+                break
+            else:
+                break
+            cursor = (cursor[0] + direction[0], cursor[1] + direction[1])
+
+        backward_count = 0
+        backward_space = 0
+        cursor = (coord[0] + opposite[0], coord[1] + opposite[1])
+        while cursor in game.board.cells:
+            cell = game.board.cells.get(cursor)
+            if cell == player:
+                backward_count += 1
+            elif cell is None:
+                backward_space += 1
+                break
+            else:
+                break
+            cursor = (cursor[0] + opposite[0], cursor[1] + opposite[1])
+
+        total_friendly = forward_count + backward_count
+        total_space = forward_space + backward_space
+
+        # Value based on potential to reach 4
+        if total_friendly >= 2:
+            score += 50  # Close to winning
+        elif total_friendly == 1 and total_space >= 1:
+            score += 20  # Building potential
+
+        return score
+
+    def _advanced_move_score(self, game: "Hex3TabooGame", coord: AxialCoord) -> float:
+        """Advanced scoring for move ordering at the root level."""
+        score = 0.0
+        opponent = 1 if self.player_id == 2 else 2
+
+        # Winning move
+        if self._would_win(game, coord, self.player_id):
+            return 100000
+
+        # Block opponent win
+        if self._would_win(game, coord, opponent):
+            return 90000
+
+        # Check for fork creation (multiple threats)
+        threats_created = self._count_threats_after_move(game, coord, self.player_id)
+        if threats_created >= 2:
+            score += 5000  # Fork is very powerful
+
+        # Check if this position helps force opponent into losing
+        if self._forces_opponent_loss(game, coord, opponent):
+            score += 4000
+
+        # Avoid creating isolated 3
+        if self._would_lose(game, coord, self.player_id):
+            return -50000
+
+        # Line building potential
+        for direction in HexBoard.AXIAL_DIRECTIONS:
+            score += self._evaluate_line_potential(game, coord, direction, self.player_id) * 2
+
+        # Center preference
+        dist = abs(coord[0]) + abs(coord[1]) + abs(-coord[0] - coord[1])
+        score += max(0, 30 - dist * 3)
+
+        # Connectivity bonus
+        for direction in HexBoard.AXIAL_DIRECTIONS:
+            adj = (coord[0] + direction[0], coord[1] + direction[1])
+            if game.board.cells.get(adj) == self.player_id:
+                score += 25
+
+        return score
+
+    def _count_threats_after_move(
+        self, game: "Hex3TabooGame", coord: AxialCoord, player: int
+    ) -> int:
+        """Count how many open 3-in-a-rows would be created by this move."""
+        original = game.board.cells[coord]
+        game.board.set(coord, player)
+
+        threats = 0
+        for direction in HexBoard.AXIAL_DIRECTIONS:
+            line_length, open_ends = self._count_line(game, coord, direction, player)
+            # An open 3 is a threat (can become 4)
+            if line_length == 3 and open_ends >= 1:
+                threats += 1
+
+        game.board.set(coord, original)
+        return threats
+
+    def _forces_opponent_loss(
+        self, game: "Hex3TabooGame", coord: AxialCoord, opponent: int
+    ) -> bool:
+        """Check if this move forces the opponent into creating an isolated 3."""
+        original = game.board.cells[coord]
+        game.board.set(coord, self.player_id)
+
+        # After our move, check if any remaining move for opponent causes them to lose
+        empty = game.board.empty_cells()
+        forbidden = game.forbidden_placements.get(opponent)
+        opponent_moves = [c for c in empty if c != forbidden]
+
+        if not opponent_moves:
+            game.board.set(coord, original)
+            return False
+
+        # Count how many safe moves opponent has
+        safe_count = 0
+        for opp_move in opponent_moves:
+            if not self._would_lose(game, opp_move, opponent):
+                safe_count += 1
+                if safe_count > 3:  # If many safe moves, not forcing
+                    break
+
+        game.board.set(coord, original)
+
+        # If opponent has very few safe moves, this is a forcing position
+        return safe_count <= 2
 
 
 @dataclass
@@ -1817,6 +2130,12 @@ class StartScreen(_TkFrameBase):  # type: ignore[misc]
             command=lambda: self._start_cpu("hard"), width=90, height=35, style="secondary"
         )
         self.hard_btn.pack(side="left", padx=3)
+
+        self.expert_btn = StyledButton(
+            diff_buttons_frame, "最強", self.theme,
+            command=lambda: self._start_cpu("expert"), width=70, height=35, style="danger"
+        )
+        self.expert_btn.pack(side="left", padx=3)
 
         # Separator
         separator = tk.Frame(button_frame, bg=self.theme.panel_border, height=1)
@@ -2686,8 +3005,17 @@ class Hex3TabooGUI:
         if self._ai_thinking or self._game_over:
             return
         self._ai_thinking = True
-        # Add delay for better UX
-        delay = 500 if self._ai_player and self._ai_player.difficulty == AIPlayer.HARD else 300
+        # Add delay for better UX (longer for harder difficulties)
+        if self._ai_player:
+            difficulty_delays = {
+                AIPlayer.EASY: 200,
+                AIPlayer.MEDIUM: 300,
+                AIPlayer.HARD: 500,
+                AIPlayer.EXPERT: 700,
+            }
+            delay = difficulty_delays.get(self._ai_player.difficulty, 300)
+        else:
+            delay = 300
         self.root.after(delay, self._execute_ai_turn)
 
     def _execute_ai_turn(self) -> None:
