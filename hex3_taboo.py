@@ -532,6 +532,431 @@ class GameStats:
             self.streak_player = 0
 
 
+class AIPlayer:
+    """AI player for Hex 3-Taboo with multiple difficulty levels."""
+
+    EASY = "easy"
+    MEDIUM = "medium"
+    HARD = "hard"
+
+    def __init__(self, difficulty: str = "medium", player_id: int = 2) -> None:
+        if difficulty not in (self.EASY, self.MEDIUM, self.HARD):
+            raise ValueError(f"無効な難易度: {difficulty}")
+        self.difficulty = difficulty
+        self.player_id = player_id
+        self._max_depth = {self.EASY: 1, self.MEDIUM: 2, self.HARD: 4}[difficulty]
+
+    def get_difficulty_name(self) -> str:
+        names = {self.EASY: "かんたん", self.MEDIUM: "ふつう", self.HARD: "むずかしい"}
+        return names[self.difficulty]
+
+    def choose_action(self, game: "Hex3TabooGame") -> Tuple[str, Optional[AxialCoord]]:
+        """Choose the best action for the current game state.
+
+        Returns: ("place", coord) or ("remove", None)
+        """
+        if self.difficulty == self.EASY:
+            return self._choose_easy(game)
+        elif self.difficulty == self.MEDIUM:
+            return self._choose_medium(game)
+        else:
+            return self._choose_hard(game)
+
+    def _choose_easy(self, game: "Hex3TabooGame") -> Tuple[str, Optional[AxialCoord]]:
+        """Random move selection."""
+        empty = game.board.empty_cells()
+        forbidden = game.forbidden_placements.get(game.current_player)
+        valid = [c for c in empty if c != forbidden]
+        if valid:
+            return ("place", random.choice(valid))
+        return ("place", None)
+
+    def _choose_medium(self, game: "Hex3TabooGame") -> Tuple[str, Optional[AxialCoord]]:
+        """Basic strategy: block wins, seek wins, avoid losses."""
+        empty = game.board.empty_cells()
+        forbidden = game.forbidden_placements.get(game.current_player)
+        valid = [c for c in empty if c != forbidden]
+
+        if not valid:
+            return ("place", None)
+
+        opponent = 1 if self.player_id == 2 else 2
+
+        # Check for immediate win
+        for coord in valid:
+            if self._would_win(game, coord, self.player_id):
+                return ("place", coord)
+
+        # Block opponent's win
+        for coord in valid:
+            if self._would_win(game, coord, opponent):
+                return ("place", coord)
+
+        # Avoid creating isolated 3-line (loss)
+        safe_moves = [c for c in valid if not self._would_lose(game, c, self.player_id)]
+
+        # Consider neutralization
+        if game.current_player == 2 and game.can_remove():
+            if self._should_neutralize(game):
+                return ("remove", None)
+
+        # Prefer center positions
+        if safe_moves:
+            return ("place", self._pick_strategic(game, safe_moves))
+
+        # If all moves cause loss, pick random
+        return ("place", random.choice(valid))
+
+    def _choose_hard(self, game: "Hex3TabooGame") -> Tuple[str, Optional[AxialCoord]]:
+        """Minimax with alpha-beta pruning."""
+        empty = game.board.empty_cells()
+        forbidden = game.forbidden_placements.get(game.current_player)
+        valid = [c for c in empty if c != forbidden]
+
+        if not valid:
+            return ("place", None)
+
+        best_score = float("-inf")
+        best_move: Optional[AxialCoord] = None
+        alpha = float("-inf")
+        beta = float("inf")
+
+        # Consider neutralization first
+        if game.current_player == 2 and game.can_remove():
+            neutralize_score = self._evaluate_neutralization(game)
+            if neutralize_score > 500:
+                return ("remove", None)
+
+        # Sort moves by heuristic for better pruning
+        scored_moves = [(c, self._quick_eval(game, c)) for c in valid]
+        scored_moves.sort(key=lambda x: x[1], reverse=True)
+
+        for coord, _ in scored_moves:
+            score = self._minimax(game, coord, self._max_depth, alpha, beta, False)
+            if score > best_score:
+                best_score = score
+                best_move = coord
+            alpha = max(alpha, score)
+            if beta <= alpha:
+                break
+
+        return ("place", best_move if best_move else random.choice(valid))
+
+    def _minimax(
+        self,
+        game: "Hex3TabooGame",
+        move: AxialCoord,
+        depth: int,
+        alpha: float,
+        beta: float,
+        is_maximizing: bool,
+    ) -> float:
+        """Minimax algorithm with alpha-beta pruning."""
+        # Simulate move
+        original_cell = game.board.cells[move]
+        current = game.current_player
+        game.board.set(move, current)
+
+        # Check terminal state
+        has_win, has_loss, _, _ = game.evaluate_player_state(current)
+
+        if has_win:
+            game.board.set(move, original_cell)
+            return 10000 if current == self.player_id else -10000
+
+        if has_loss:
+            game.board.set(move, original_cell)
+            return -10000 if current == self.player_id else 10000
+
+        if depth == 0 or game.board.is_full():
+            score = self._evaluate_board(game)
+            game.board.set(move, original_cell)
+            return score
+
+        # Get valid moves for next player
+        next_player = 1 if current == 2 else 2
+        empty = game.board.empty_cells()
+        forbidden = game.forbidden_placements.get(next_player)
+        valid_moves = [c for c in empty if c != forbidden]
+
+        if not valid_moves:
+            game.board.set(move, original_cell)
+            return self._evaluate_board(game)
+
+        # Switch player for simulation
+        game.current_player = next_player
+
+        if is_maximizing:
+            max_eval = float("-inf")
+            for next_move in valid_moves[:10]:  # Limit branching
+                eval_score = self._minimax(game, next_move, depth - 1, alpha, beta, False)
+                max_eval = max(max_eval, eval_score)
+                alpha = max(alpha, eval_score)
+                if beta <= alpha:
+                    break
+            game.board.set(move, original_cell)
+            game.current_player = current
+            return max_eval
+        else:
+            min_eval = float("inf")
+            for next_move in valid_moves[:10]:  # Limit branching
+                eval_score = self._minimax(game, next_move, depth - 1, alpha, beta, True)
+                min_eval = min(min_eval, eval_score)
+                beta = min(beta, eval_score)
+                if beta <= alpha:
+                    break
+            game.board.set(move, original_cell)
+            game.current_player = current
+            return min_eval
+
+    def _evaluate_board(self, game: "Hex3TabooGame") -> float:
+        """Evaluate board position for the AI player."""
+        score = 0.0
+        opponent = 1 if self.player_id == 2 else 2
+
+        for coord, occupant in game.board.cells.items():
+            if occupant is None or occupant == HexBoard.DISABLED_STONE:
+                continue
+
+            for direction in HexBoard.AXIAL_DIRECTIONS:
+                line_length, open_ends = self._count_line(game, coord, direction, occupant)
+
+                if occupant == self.player_id:
+                    if line_length >= 4:
+                        score += 1000
+                    elif line_length == 3:
+                        if open_ends == 0:
+                            score -= 500  # Isolated 3 = loss risk
+                        elif open_ends >= 1:
+                            score += 100  # Potential win
+                    elif line_length == 2 and open_ends >= 1:
+                        score += 20
+                else:  # Opponent
+                    if line_length >= 4:
+                        score -= 1000
+                    elif line_length == 3:
+                        if open_ends == 0:
+                            score += 500  # Opponent's loss = good
+                        elif open_ends >= 1:
+                            score -= 100  # Block this
+                    elif line_length == 2 and open_ends >= 1:
+                        score -= 20
+
+        # Prefer center positions
+        for coord, occupant in game.board.cells.items():
+            if occupant == self.player_id:
+                dist = abs(coord[0]) + abs(coord[1]) + abs(-coord[0] - coord[1])
+                score += max(0, 10 - dist)
+            elif occupant == opponent:
+                dist = abs(coord[0]) + abs(coord[1]) + abs(-coord[0] - coord[1])
+                score -= max(0, 5 - dist)
+
+        return score
+
+    def _count_line(
+        self, game: "Hex3TabooGame", start: AxialCoord, direction: AxialCoord, player: int
+    ) -> Tuple[int, int]:
+        """Count consecutive stones and open ends for a line."""
+        opposite = (-direction[0], -direction[1])
+        prev = (start[0] + opposite[0], start[1] + opposite[1])
+
+        # Only count from line start
+        if game.board.cells.get(prev) == player:
+            return 0, 0
+
+        length = 0
+        cursor = start
+        while game.board.cells.get(cursor) == player:
+            length += 1
+            cursor = (cursor[0] + direction[0], cursor[1] + direction[1])
+
+        # Count open ends
+        open_ends = 0
+        end_occupant = game.board.cells.get(cursor)
+        start_occupant = game.board.cells.get(prev)
+
+        if end_occupant is None:
+            open_ends += 1
+        if start_occupant is None:
+            open_ends += 1
+
+        return length, open_ends
+
+    def _would_win(self, game: "Hex3TabooGame", coord: AxialCoord, player: int) -> bool:
+        """Check if placing at coord would create a winning line."""
+        original = game.board.cells[coord]
+        game.board.set(coord, player)
+
+        for direction in HexBoard.AXIAL_DIRECTIONS:
+            length = 1
+            # Check forward
+            cursor = (coord[0] + direction[0], coord[1] + direction[1])
+            while game.board.cells.get(cursor) == player:
+                length += 1
+                cursor = (cursor[0] + direction[0], cursor[1] + direction[1])
+            # Check backward
+            opposite = (-direction[0], -direction[1])
+            cursor = (coord[0] + opposite[0], coord[1] + opposite[1])
+            while game.board.cells.get(cursor) == player:
+                length += 1
+                cursor = (cursor[0] + opposite[0], cursor[1] + opposite[1])
+
+            if length >= 4:
+                game.board.set(coord, original)
+                return True
+
+        game.board.set(coord, original)
+        return False
+
+    def _would_lose(self, game: "Hex3TabooGame", coord: AxialCoord, player: int) -> bool:
+        """Check if placing at coord would create an isolated 3-line (loss)."""
+        original = game.board.cells[coord]
+        game.board.set(coord, player)
+
+        for direction in HexBoard.AXIAL_DIRECTIONS:
+            length = 1
+            coords_in_line = [coord]
+
+            # Check forward
+            cursor = (coord[0] + direction[0], coord[1] + direction[1])
+            while game.board.cells.get(cursor) == player:
+                length += 1
+                coords_in_line.append(cursor)
+                cursor = (cursor[0] + direction[0], cursor[1] + direction[1])
+            end_coord = cursor
+
+            # Check backward
+            opposite = (-direction[0], -direction[1])
+            cursor = (coord[0] + opposite[0], coord[1] + opposite[1])
+            while game.board.cells.get(cursor) == player:
+                length += 1
+                coords_in_line.insert(0, cursor)
+                cursor = (cursor[0] + opposite[0], cursor[1] + opposite[1])
+            start_coord = cursor
+
+            # Check for isolated 3-line
+            if length == 3:
+                start_occupant = game.board.cells.get(start_coord)
+                end_occupant = game.board.cells.get(end_coord)
+                if start_occupant != player and end_occupant != player:
+                    # But not if it's also part of a 4+ line
+                    is_part_of_longer = False
+                    for c in coords_in_line:
+                        for d in HexBoard.AXIAL_DIRECTIONS:
+                            if d == direction or d == opposite:
+                                continue
+                            test_length = 1
+                            tc = (c[0] + d[0], c[1] + d[1])
+                            while game.board.cells.get(tc) == player:
+                                test_length += 1
+                                tc = (tc[0] + d[0], tc[1] + d[1])
+                            opp_d = (-d[0], -d[1])
+                            tc = (c[0] + opp_d[0], c[1] + opp_d[1])
+                            while game.board.cells.get(tc) == player:
+                                test_length += 1
+                                tc = (tc[0] + opp_d[0], tc[1] + opp_d[1])
+                            if test_length >= 4:
+                                is_part_of_longer = True
+                                break
+                        if is_part_of_longer:
+                            break
+
+                    if not is_part_of_longer:
+                        game.board.set(coord, original)
+                        return True
+
+        game.board.set(coord, original)
+        return False
+
+    def _should_neutralize(self, game: "Hex3TabooGame") -> bool:
+        """Determine if neutralization is a good move."""
+        if not game.history:
+            return False
+
+        last_move = game.history[-1]
+        if last_move.action != "place" or last_move.coordinate is None:
+            return False
+
+        coord = last_move.coordinate
+        opponent = last_move.player
+
+        # Check if opponent's last move created a strong position
+        for direction in HexBoard.AXIAL_DIRECTIONS:
+            length = 1
+            cursor = (coord[0] + direction[0], coord[1] + direction[1])
+            while game.board.cells.get(cursor) == opponent:
+                length += 1
+                cursor = (cursor[0] + direction[0], cursor[1] + direction[1])
+            opposite = (-direction[0], -direction[1])
+            cursor = (coord[0] + opposite[0], coord[1] + opposite[1])
+            while game.board.cells.get(cursor) == opponent:
+                length += 1
+                cursor = (cursor[0] + opposite[0], cursor[1] + opposite[1])
+
+            if length >= 3:
+                return True
+
+        return False
+
+    def _evaluate_neutralization(self, game: "Hex3TabooGame") -> float:
+        """Evaluate how valuable neutralization would be."""
+        if not game.history:
+            return 0
+
+        last_move = game.history[-1]
+        if last_move.action != "place" or last_move.coordinate is None:
+            return 0
+
+        coord = last_move.coordinate
+        opponent = last_move.player
+        score = 0.0
+
+        for direction in HexBoard.AXIAL_DIRECTIONS:
+            length = 1
+            cursor = (coord[0] + direction[0], coord[1] + direction[1])
+            while game.board.cells.get(cursor) == opponent:
+                length += 1
+                cursor = (cursor[0] + direction[0], cursor[1] + direction[1])
+            opposite = (-direction[0], -direction[1])
+            cursor = (coord[0] + opposite[0], coord[1] + opposite[1])
+            while game.board.cells.get(cursor) == opponent:
+                length += 1
+                cursor = (cursor[0] + opposite[0], cursor[1] + opposite[1])
+
+            if length >= 4:
+                score += 1000  # Block a win
+            elif length == 3:
+                score += 300
+
+        return score
+
+    def _pick_strategic(self, game: "Hex3TabooGame", valid: List[AxialCoord]) -> AxialCoord:
+        """Pick a strategically good position."""
+        scored = [(c, self._quick_eval(game, c)) for c in valid]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        # Add some randomness among top choices
+        top = [c for c, s in scored[:3]]
+        return random.choice(top) if top else valid[0]
+
+    def _quick_eval(self, game: "Hex3TabooGame", coord: AxialCoord) -> float:
+        """Quick heuristic evaluation for move ordering."""
+        score = 0.0
+        # Prefer center
+        dist = abs(coord[0]) + abs(coord[1]) + abs(-coord[0] - coord[1])
+        score += max(0, 20 - dist * 2)
+
+        # Check adjacent stones
+        for direction in HexBoard.AXIAL_DIRECTIONS:
+            adj = (coord[0] + direction[0], coord[1] + direction[1])
+            opp = (coord[0] - direction[0], coord[1] - direction[1])
+            if game.board.cells.get(adj) == self.player_id:
+                score += 10
+            if game.board.cells.get(opp) == self.player_id:
+                score += 10
+
+        return score
+
+
 @dataclass
 class Particle:
     """Particle for celebration effects."""
@@ -1278,11 +1703,12 @@ class StartScreen(_TkFrameBase):  # type: ignore[misc]
     def __init__(self, parent: tk.Widget, theme: Theme, on_start: Callable, on_settings: Callable, on_rules: Callable) -> None:
         super().__init__(parent, bg=theme.window_bg)
         self.theme = theme
-        self.on_start = on_start
+        self.on_start = on_start  # Called with (game_mode, ai_difficulty)
         self.on_settings = on_settings
         self.on_rules = on_rules
         self._animation_id: Optional[str] = None
         self._particles: List[Dict] = []
+        self._selected_difficulty = "medium"
 
         self._create_widgets()
         self._start_animation()
@@ -1343,30 +1769,90 @@ class StartScreen(_TkFrameBase):  # type: ignore[misc]
         button_frame = tk.Frame(content, bg=self.theme.window_bg)
         button_frame.pack()
 
-        self.start_button = StyledButton(
-            button_frame, "ゲーム開始", self.theme,
-            command=self.on_start, width=200, height=50, icon="▶"
+        # Game mode label
+        mode_label = tk.Label(
+            button_frame, text="ゲームモード",
+            font=("Helvetica", 12, "bold"), bg=self.theme.window_bg, fg=self.theme.text_primary
         )
-        self.start_button.pack(pady=8)
+        mode_label.pack(pady=(0, 8))
+
+        self.pvp_button = StyledButton(
+            button_frame, "対人対戦", self.theme,
+            command=self._start_pvp, width=200, height=50, icon="👥"
+        )
+        self.pvp_button.pack(pady=5)
+
+        self.cpu_button = StyledButton(
+            button_frame, "CPU対戦", self.theme,
+            command=self._show_difficulty_selector, width=200, height=50, icon="🤖"
+        )
+        self.cpu_button.pack(pady=5)
+
+        # Difficulty selector (initially hidden)
+        self.difficulty_frame = tk.Frame(button_frame, bg=self.theme.window_bg)
+
+        diff_label = tk.Label(
+            self.difficulty_frame, text="難易度を選択",
+            font=("Helvetica", 11), bg=self.theme.window_bg, fg=self.theme.text_secondary
+        )
+        diff_label.pack(pady=(5, 5))
+
+        diff_buttons_frame = tk.Frame(self.difficulty_frame, bg=self.theme.window_bg)
+        diff_buttons_frame.pack()
+
+        self.easy_btn = StyledButton(
+            diff_buttons_frame, "かんたん", self.theme,
+            command=lambda: self._start_cpu("easy"), width=90, height=35, style="secondary"
+        )
+        self.easy_btn.pack(side="left", padx=3)
+
+        self.medium_btn = StyledButton(
+            diff_buttons_frame, "ふつう", self.theme,
+            command=lambda: self._start_cpu("medium"), width=90, height=35, style="secondary"
+        )
+        self.medium_btn.pack(side="left", padx=3)
+
+        self.hard_btn = StyledButton(
+            diff_buttons_frame, "むずかしい", self.theme,
+            command=lambda: self._start_cpu("hard"), width=90, height=35, style="secondary"
+        )
+        self.hard_btn.pack(side="left", padx=3)
+
+        # Separator
+        separator = tk.Frame(button_frame, bg=self.theme.panel_border, height=1)
+        separator.pack(fill="x", pady=15)
 
         self.rules_button = StyledButton(
             button_frame, "ルール説明", self.theme,
-            command=self.on_rules, width=200, height=45, style="secondary", icon="📖"
+            command=self.on_rules, width=200, height=40, style="secondary", icon="📖"
         )
-        self.rules_button.pack(pady=8)
+        self.rules_button.pack(pady=5)
 
         self.settings_button = StyledButton(
             button_frame, "設定", self.theme,
-            command=self.on_settings, width=200, height=45, style="secondary", icon="⚙"
+            command=self.on_settings, width=200, height=40, style="secondary", icon="⚙"
         )
-        self.settings_button.pack(pady=8)
+        self.settings_button.pack(pady=5)
 
         # Version
         version_label = tk.Label(
-            content, text="v2.0",
+            content, text="v3.0 - AI対戦対応",
             font=("Helvetica", 10), bg=self.theme.window_bg, fg=self.theme.text_secondary
         )
-        version_label.pack(pady=(30, 0))
+        version_label.pack(pady=(20, 0))
+
+    def _start_pvp(self) -> None:
+        """Start player vs player game."""
+        self.on_start("pvp", None)
+
+    def _show_difficulty_selector(self) -> None:
+        """Show difficulty selection buttons."""
+        self.difficulty_frame.pack(pady=5)
+
+    def _start_cpu(self, difficulty: str) -> None:
+        """Start player vs CPU game with selected difficulty."""
+        self._selected_difficulty = difficulty
+        self.on_start("cpu", difficulty)
 
     def _draw_hex_logo(self) -> None:
         cx, cy = 60, 60
@@ -1465,7 +1951,11 @@ class StartScreen(_TkFrameBase):  # type: ignore[misc]
         self.shadow_label.config(bg=theme.window_bg, fg=theme.shadow_color)
         self.hex_canvas.config(bg=theme.window_bg)
         self._draw_hex_logo()
-        self.start_button.update_theme(theme)
+        self.pvp_button.update_theme(theme)
+        self.cpu_button.update_theme(theme)
+        self.easy_btn.update_theme(theme)
+        self.medium_btn.update_theme(theme)
+        self.hard_btn.update_theme(theme)
         self.rules_button.update_theme(theme)
         self.settings_button.update_theme(theme)
 
@@ -1513,6 +2003,11 @@ class Hex3TabooGUI:
         self._hovered_item: Optional[int] = None
         self._game_started = False
         self._game_over = False
+
+        # AI settings
+        self._game_mode: str = "pvp"  # "pvp" or "cpu"
+        self._ai_player: Optional[AIPlayer] = None
+        self._ai_thinking = False
 
         # Create UI
         self._create_menu()
@@ -1575,7 +2070,12 @@ class Hex3TabooGUI:
         self.left_panel.pack(side="left", fill="y", padx=(10, 0), pady=10)
         self.left_panel.pack_propagate(False)
 
-        self.player1_panel = PlayerPanel(self.left_panel, 1, self.theme, "プレイヤー 1")
+        # Set player names based on game mode
+        if self._game_mode == "cpu":
+            player1_name = "あなた"
+        else:
+            player1_name = "プレイヤー 1"
+        self.player1_panel = PlayerPanel(self.left_panel, 1, self.theme, player1_name)
         self.player1_panel.pack(pady=20)
 
         # Stats display
@@ -1664,7 +2164,12 @@ class Hex3TabooGUI:
         self.right_panel.pack(side="right", fill="y", padx=(0, 10), pady=10)
         self.right_panel.pack_propagate(False)
 
-        self.player2_panel = PlayerPanel(self.right_panel, 2, self.theme, "プレイヤー 2")
+        # Set player 2 name based on game mode
+        if self._game_mode == "cpu" and self._ai_player:
+            player2_name = f"CPU（{self._ai_player.get_difficulty_name()}）"
+        else:
+            player2_name = "プレイヤー 2"
+        self.player2_panel = PlayerPanel(self.right_panel, 2, self.theme, player2_name)
         self.player2_panel.pack(pady=20)
 
         # History display
@@ -1689,14 +2194,22 @@ class Hex3TabooGUI:
         )
         self.history_listbox.pack(fill="both", expand=True, pady=(5, 0))
 
-    def _start_game(self) -> None:
+    def _start_game(self, game_mode: str = "pvp", ai_difficulty: Optional[str] = None) -> None:
         if hasattr(self, 'start_screen'):
             self.start_screen.stop_animation()
             self.start_screen.pack_forget()
             self.start_screen.destroy()
 
+        # Set game mode and AI
+        self._game_mode = game_mode
+        if game_mode == "cpu" and ai_difficulty:
+            self._ai_player = AIPlayer(difficulty=ai_difficulty, player_id=2)
+        else:
+            self._ai_player = None
+
         self._game_started = True
         self._game_over = False
+        self._ai_thinking = False
         self._create_game_ui()
         self.main_frame.pack(fill="both", expand=True)
         self._draw_board()
@@ -1722,6 +2235,7 @@ class Hex3TabooGUI:
         self._target_stone_colors.clear()
         self._active_tweens.clear()
         self._game_over = False
+        self._ai_thinking = False
         self._stop_line_highlight()
         self.particle_system.clear()
         self._draw_board()
@@ -1955,6 +2469,12 @@ class Hex3TabooGUI:
     def _handle_cell_click(self, event: tk.Event) -> None:
         if self._game_over:
             return
+        # Block clicks during AI turn
+        if self._ai_thinking:
+            return
+        # In CPU mode, block clicks when it's AI's turn
+        if self._game_mode == "cpu" and self.game.current_player == 2:
+            return
         current = event.widget.find_withtag("current")
         if not current:
             return
@@ -2157,6 +2677,49 @@ class Hex3TabooGUI:
         self.update_status()
         self.update_remove_button()
 
+        # Trigger AI turn if in CPU mode and it's AI's turn
+        if self._game_mode == "cpu" and self._ai_player and self.game.current_player == 2:
+            self._schedule_ai_turn()
+
+    def _schedule_ai_turn(self) -> None:
+        """Schedule AI to make a move after a short delay."""
+        if self._ai_thinking or self._game_over:
+            return
+        self._ai_thinking = True
+        # Add delay for better UX
+        delay = 500 if self._ai_player and self._ai_player.difficulty == AIPlayer.HARD else 300
+        self.root.after(delay, self._execute_ai_turn)
+
+    def _execute_ai_turn(self) -> None:
+        """Execute AI's turn."""
+        if self._game_over or not self._ai_player:
+            self._ai_thinking = False
+            return
+
+        action, coord = self._ai_player.choose_action(self.game)
+        acting_player = self.game.current_player
+
+        try:
+            if action == "remove":
+                removed = self.game.remove_last_opponent_stone()
+                if removed:
+                    self._add_history_entry(acting_player, "disable", removed)
+            elif action == "place" and coord:
+                self.game.place_stone(coord)
+                self._add_history_entry(acting_player, "place", coord)
+        except Exception:
+            # If AI makes invalid move, try random valid move
+            empty = self.game.board.empty_cells()
+            forbidden = self.game.forbidden_placements.get(self.game.current_player)
+            valid = [c for c in empty if c != forbidden]
+            if valid:
+                coord = random.choice(valid)
+                self.game.place_stone(coord)
+                self._add_history_entry(acting_player, "place", coord)
+
+        self._ai_thinking = False
+        self._finalize_turn(acting_player)
+
     def update_board(self) -> None:
         if not hasattr(self, 'canvas'):
             return
@@ -2228,11 +2791,24 @@ class Hex3TabooGUI:
             return
 
         token = "X" if self.game.current_player == 1 else "O"
-        if self.game.current_player == 2 and self.game.can_remove():
-            action_hint = " - 石を置くか無効化できます"
+
+        # CPU mode specific status
+        if self._game_mode == "cpu" and self.game.current_player == 2:
+            if self._ai_thinking:
+                difficulty_name = self._ai_player.get_difficulty_name() if self._ai_player else ""
+                self.status_var.set(f"CPU（{difficulty_name}）が考え中...")
+            else:
+                self.status_var.set(f"CPUの番（{token}）")
         else:
-            action_hint = " - 石を置いてください"
-        self.status_var.set(f"プレイヤー{self.game.current_player}（{token}）の番{action_hint}")
+            if self.game.current_player == 2 and self.game.can_remove():
+                action_hint = " - 石を置くか無効化できます"
+            else:
+                action_hint = " - 石を置いてください"
+
+            if self._game_mode == "cpu":
+                self.status_var.set(f"あなたの番（{token}）{action_hint}")
+            else:
+                self.status_var.set(f"プレイヤー{self.game.current_player}（{token}）の番{action_hint}")
 
         # Update player panels
         if hasattr(self, 'player1_panel'):
@@ -2397,11 +2973,56 @@ def _print_instructions(game: Hex3TabooGame) -> None:
     print("プレイヤー1はX、プレイヤー2はOを使用します。プレイヤー2は1回だけ相手の最後の石を無効化できます。")
 
 
-def run_cli(radius: int = 4) -> None:
+def run_cli(radius: int = 4, ai_difficulty: Optional[str] = None) -> None:
     game = Hex3TabooGame(radius=radius)
+    ai_player: Optional[AIPlayer] = None
+
+    if ai_difficulty:
+        ai_player = AIPlayer(difficulty=ai_difficulty, player_id=2)
+        print(f"CPU対戦モード（難易度: {ai_player.get_difficulty_name()}）")
+    else:
+        print("対人対戦モード")
+
     _print_instructions(game)
+
     while True:
         print(game.board.render())
+
+        # AI's turn
+        if ai_player and game.current_player == 2:
+            print(f"CPU（{ai_player.get_difficulty_name()}）が考え中...")
+            action, coord = ai_player.choose_action(game)
+            acting_player = game.current_player
+
+            try:
+                if action == "remove":
+                    removed = game.remove_last_opponent_stone()
+                    print(f"CPUが石{removed}を無効化しました。")
+                elif action == "place" and coord:
+                    game.place_stone(coord)
+                    print(f"CPUが{coord}に石を置きました。")
+            except Exception:
+                # Fallback to random move
+                empty = game.board.empty_cells()
+                forbidden = game.forbidden_placements.get(game.current_player)
+                valid = [c for c in empty if c != forbidden]
+                if valid:
+                    coord = random.choice(valid)
+                    game.place_stone(coord)
+                    print(f"CPUが{coord}に石を置きました。")
+
+            result = game.check_game_end()
+            if result:
+                outcome, message = result
+                print(game.board.render())
+                print(message)
+                if game.last_detected_line:
+                    print("ライン座標:", game.last_detected_line)
+                break
+            game.switch_player()
+            continue
+
+        # Human player's turn
         try:
             command = input(game.format_prompt())
         except EOFError:
@@ -2465,6 +3086,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         "--theme", choices=list(THEMES.keys()), default="light",
         help="GUIのテーマを選択します (既定値: light)"
     )
+    parser.add_argument(
+        "--ai", choices=("easy", "medium", "hard"), default=None,
+        help="CPU対戦モード（難易度を指定）。指定しない場合は対人対戦。"
+    )
     args = parser.parse_args(argv)
 
     if args.mode == "gui":
@@ -2481,7 +3106,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             sys.exit(1)
         run_gui(radius=args.radius, theme=args.theme)
     else:
-        run_cli(radius=args.radius)
+        run_cli(radius=args.radius, ai_difficulty=args.ai)
 
 
 if __name__ == "__main__":
