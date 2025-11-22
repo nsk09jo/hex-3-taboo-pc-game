@@ -1009,9 +1009,24 @@ def run_cli(radius: int = 4) -> None:
 
 
 def run_gui(radius: int = 4) -> None:
-    game = Hex3TabooGame(radius=radius)
-    gui = Hex3TabooGUI(game)
-    gui.run()
+    try:
+        game = Hex3TabooGame(radius=radius)
+        gui = Hex3TabooGUI(game)
+        gui.run()
+    except Exception as exc:
+        print(f"エラー: GUIの初期化に失敗しました: {exc}")
+        print()
+        print("macOSをお使いの場合、システム付属のPythonではTkinterが")
+        print("正常に動作しないことがあります。")
+        print()
+        print("解決方法:")
+        print("  1. python.org から最新のPythonをダウンロードしてインストール")
+        print("     https://www.python.org/downloads/")
+        print("  2. または Homebrew を使用:")
+        print("     brew install python-tk")
+        print()
+        print("CLIモードで実行する場合は: python hex3_taboo.py --mode cli")
+        sys.exit(1)
 
 
 def main(argv: Optional[List[str]] = None) -> None:
