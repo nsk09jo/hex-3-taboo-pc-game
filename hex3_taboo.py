@@ -1029,7 +1029,16 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     if args.mode == "gui":
         if tk is None:
-            raise RuntimeError("Tkinter is not available; GUI mode cannot be used.")
+            print("エラー: Tkinterが利用できないため、GUIモードを起動できません。")
+            print()
+            print("Tkinterをインストールするには:")
+            print("  - Ubuntu/Debian: sudo apt-get install python3-tk")
+            print("  - Fedora: sudo dnf install python3-tkinter")
+            print("  - macOS: Pythonに同梱されています（python.orgからインストールしてください）")
+            print("  - Windows: Pythonインストーラーで「tcl/tk and IDLE」を選択してください")
+            print()
+            print("CLIモードで実行する場合は: python hex3_taboo.py --mode cli")
+            sys.exit(1)
         run_gui(radius=args.radius)
     else:
         run_cli(radius=args.radius)
